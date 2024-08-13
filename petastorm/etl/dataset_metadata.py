@@ -17,8 +17,9 @@ import logging
 import os
 from concurrent import futures
 from contextlib import contextmanager
-from operator import attrgetter
+from dataclasses import dataclass
 from urllib.parse import urlparse
+from typing import Dict, Any, List
 
 from packaging import version
 from pyarrow import parquet as pq
@@ -28,6 +29,21 @@ from petastorm import utils
 from petastorm.etl.legacy import depickle_legacy_package_name_compatible
 from petastorm.fs_utils import FilesystemResolver, get_filesystem_and_path_or_paths, get_dataset_path
 from petastorm.unischema import Unischema
+from petastorm.utils import path_exists, common_metadata_path, get_dataset_metadata_dict
+
+
+@dataclass
+class RowGroupIndices:
+    fragment_index: int
+    fragment_path: str
+    row_group_id: int
+    row_group_num_rows: int
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {'fragment_index': self.fragment_index,
+                'fragment_path': self.fragment_path,
+                'row_group_id': self.row_group_id,
+                'row_group_num_rows': self.row_group_num_rows}
 
 logger = logging.getLogger(__name__)
 
@@ -106,18 +122,17 @@ def materialize_dataset(spark, dataset_url, schema, row_group_size_mb=None, use_
 
     dataset = pq.ParquetDataset(
         dataset_path,
-        filesystem=filesystem,
-        validate_schema=False)
+        filesystem=filesystem)
 
     _generate_unischema_metadata(dataset, schema)
-    if not use_summary_metadata:
-        _generate_num_row_groups_per_file(dataset, spark.sparkContext, filesystem_factory)
+    _generate_num_row_groups_per_file(dataset)
+    if use_summary_metadata:
+        raise ValueError("This petastorm version does not support parquet summary metadata. Use use_summary_metadata=False.")
 
     # Reload the dataset to take into account the new metadata
     dataset = pq.ParquetDataset(
         dataset_path,
-        filesystem=filesystem,
-        validate_schema=False)
+        filesystem=filesystem)
     try:
         # Try to load the row groups, if it fails that means the metadata was not generated properly
         load_row_groups(dataset)
@@ -205,167 +220,140 @@ def _generate_unischema_metadata(dataset, schema):
     utils.add_to_dataset_metadata(dataset, UNISCHEMA_KEY, serialized_schema)
 
 
-def _generate_num_row_groups_per_file(dataset, spark_context, filesystem_factory):
+def _generate_num_row_groups_per_file(dataset):
     """
     Generates the metadata file containing the number of row groups in each file
-    for the parquet dataset located at the dataset_url. It does this in spark by
-    opening all parquet files in the dataset on the executors and collecting the
-    number of row groups in each file back on the driver.
+    for the parquet dataset located at the dataset_url.
     :param dataset: :class:`pyarrow.parquet.ParquetDataset`
-    :param spark_context: spark context to use for retrieving the number of row groups
-    in each parquet file in parallel
     :return: None, upon successful completion the metadata file will exist.
     """
-    if not isinstance(dataset.paths, str):
-        raise ValueError('Expected dataset.paths to be a single path, not a list of paths')
 
     # Get the common prefix of all the base path in order to retrieve a relative path
-    paths = [piece.path for piece in dataset.pieces]
-
-    # Needed pieces from the dataset must be extracted for spark because the dataset object is not serializable
-    base_path = dataset.paths
-
-    def get_row_group_info(path):
-        fs = filesystem_factory()
-        relative_path = os.path.relpath(path, base_path)
-        pq_file = fs.open(path)
-        num_row_groups = pq.read_metadata(pq_file).num_row_groups
-        pq_file.close()
-        return relative_path, num_row_groups
-
-    row_groups = spark_context.parallelize(paths, len(paths)) \
-        .map(get_row_group_info) \
-        .collect()
-    num_row_groups_str = json.dumps(dict(row_groups))
+    row_groups = [rg.to_dict() for rg in _row_groups(dataset)]
+    num_row_groups_str = json.dumps(row_groups)
     # Add the dict for the number of row groups in each file to the parquet file metadata footer
     utils.add_to_dataset_metadata(dataset, ROW_GROUPS_PER_FILE_KEY, num_row_groups_str)
 
-
-def load_row_groups(dataset):
-    """
-    Load dataset row group pieces from metadata
-    :param dataset: parquet dataset object.
-    :param allow_read_footers: whether to allow reading parquet footers if there is no better way
-            to load row group information
-    :return: splitted pieces, one piece per row group
-    """
-    # We try to get row group information from metadata file
-    metadata = dataset.metadata
-    common_metadata = dataset.common_metadata
-    if not metadata and not common_metadata:
-        # If we are inferring the schema we allow reading the footers to get the row group information
-        return _split_row_groups_from_footers(dataset)
-
-    if metadata and metadata.num_row_groups > 0:
-        # If the metadata file exists and has row group information we use it to split the dataset pieces
-        return _split_row_groups(dataset)
-
-    # If we don't have row groups in the common metadata we look for the old way of loading it
-    dataset_metadata_dict = common_metadata.metadata
-    if ROW_GROUPS_PER_FILE_KEY not in dataset_metadata_dict:
-        raise PetastormMetadataError(
-            'Could not find row group metadata in _common_metadata file.'
-            ' Use materialize_dataset(..) in petastorm.etl.dataset_metadata.py to generate'
-            ' this file in your ETL code.'
-            ' You can generate it on an existing dataset using petastorm-generate-metadata.py')
-    metadata_dict_key = ROW_GROUPS_PER_FILE_KEY
-    row_groups_per_file = json.loads(dataset_metadata_dict[metadata_dict_key].decode())
-
-    rowgroups = []
+def _row_groups(dataset) -> list[RowGroupIndices]:
     # Force order of pieces. The order is not deterministic since it depends on multithreaded directory
     # listing implementation inside pyarrow. We stabilize order here, this way we get reproducable order
     # when pieces shuffling is off. This also enables implementing piece shuffling given a seed
-    sorted_pieces = sorted(dataset.pieces, key=attrgetter('path'))
-    for piece in sorted_pieces:
-        # If we are not using absolute paths, we need to convert the path to a relative path for
-        # looking up the number of row groups.
-        row_groups_key = os.path.relpath(piece.path, dataset.paths)
+    sorted_fragments = sorted(enumerate(dataset.fragments), key=lambda index_fragment: index_fragment[1].path)
+    rowgroups = []
+    for fragment_index, fragment in sorted_fragments:
+        for row_group in fragment.row_groups:
+            rowgroups.append(RowGroupIndices(fragment_index=fragment_index,
+                                             fragment_path=fragment.path,
+                                             row_group_id=row_group.id,
+                                             row_group_num_rows=row_group.num_rows))
+    return rowgroups
 
-        # When reading parquet store directly from an s3 bucket, a separate piece is created for root directory.
-        # This is not a real "piece" and we won't have row_groups_per_file recorded for it.
-        if row_groups_key != ".":
-            for row_group in range(row_groups_per_file[row_groups_key]):
-                rowgroups.append(pq.ParquetDatasetPiece(piece.path, open_file_func=dataset.fs.open, row_group=row_group,
-                                                        partition_keys=piece.partition_keys))
+def load_row_groups(dataset: pq.ParquetDataset) -> list[RowGroupIndices]:
+    """
+    Load dataset row group pieces from metadata
+    :param dataset: parquet dataset object.
+    :return: list of RowGroupIndices
+    """
+    common_metadata_file_path = common_metadata_path(dataset, '_common_metadata')
+    if path_exists(dataset.filesystem, common_metadata_file_path):
+        dataset_metadata_dict = get_dataset_metadata_dict(common_metadata_file_path, filesystem=dataset.filesystem)
+    else:
+        dataset_metadata_dict = {}
+
+    rowgroups: List[RowGroupIndices] = []
+    if ROW_GROUPS_PER_FILE_KEY in dataset_metadata_dict:
+        try:
+            row_groups_list = json.loads(dataset_metadata_dict[ROW_GROUPS_PER_FILE_KEY].decode())
+            rowgroups = [RowGroupIndices(**rg) for rg in row_groups_list]
+        except Exception:
+            # The row group data is not properly formatted, we recompute it.
+            rowgroups = _row_groups(dataset)
+            logger.warning(f"_common_metadata file contains an old metadata version for {ROW_GROUPS_PER_FILE_KEY}")
+            logger.warning(f"We recompute the row_groups information which can take some time.")
+    else:
+        rowgroups = _row_groups(dataset)
     return rowgroups
 
 
-# This code has been copied (with small adjustments) from https://github.com/apache/arrow/pull/2223
-# Once that is merged and released this code can be deleted since we can use the open source
-# implementation.
-def _split_row_groups(dataset):
-    if not dataset.metadata or dataset.metadata.num_row_groups == 0:
-        raise NotImplementedError("split_row_groups is only implemented "
-                                  "if dataset has parquet summary files "
-                                  "with row group information")
+# # This code has been copied (with small adjustments) from https://github.com/apache/arrow/pull/2223
+# # Once that is merged and released this code can be deleted since we can use the open source
+# # implementation.
+# def _split_row_groups(dataset):
+#     if not dataset.metadata or dataset.metadata.num_row_groups == 0:
+#         raise NotImplementedError("split_row_groups is only implemented "
+#                                   "if dataset has parquet summary files "
+#                                   "with row group information")
+#
+#     # We make a dictionary of how many row groups are in each file in
+#     # order to split them. The Parquet Metadata file stores paths as the
+#     # relative path from the dataset base dir.
+#     row_groups_per_file = dict()
+#     for i in range(dataset.metadata.num_row_groups):
+#         row_group = dataset.metadata.row_group(i)
+#         path = row_group.column(0).file_path
+#         row_groups_per_file[path] = row_groups_per_file.get(path, 0) + 1
+#
+#     base_path = os.path.normpath(os.path.dirname(dataset.metadata_path))
+#     split_pieces = []
+#     for piece in dataset.pieces:
+#         # Since the pieces are absolute path, we get the
+#         # relative path to the dataset base dir to fetch the
+#         # number of row groups in the file
+#         relative_path = os.path.relpath(piece.path, base_path)
+#
+#         # If the path is not in the metadata file, that means there are
+#         # no row groups in that file and that file should be skipped
+#         if relative_path not in row_groups_per_file:
+#             continue
+#
+#         for row_group in range(row_groups_per_file[relative_path]):
+#             split_piece = pq.ParquetDatasetPiece(piece.path, open_file_func=dataset.fs.open, row_group=row_group,
+#                                                  partition_keys=piece.partition_keys)
+#             split_pieces.append(split_piece)
+#
+#     return split_pieces
+#
+#
+# def _split_piece(piece, fs_open):
+#     metadata = piece.get_metadata()
+#     return [pq.ParquetDatasetPiece(piece.path, open_file_func=fs_open,
+#                                    row_group=row_group,
+#                                    partition_keys=piece.partition_keys)
+#             for row_group in range(metadata.num_row_groups)]
+#
+#
+# def _split_row_groups_from_footers(dataset):
+#     """Split the row groups by reading the footers of the parquet pieces"""
+#
+#     logger.info('Recovering rowgroup information for the entire dataset. This can take a long time for datasets with '
+#                 'large number of files. If this dataset was generated by Petastorm '
+#                 '(i.e. by using "with materialize_dataset(...)") and you still see this message, '
+#                 'this indicates that the materialization did not finish successfully.')
+#
+#     thread_pool = futures.ThreadPoolExecutor()
+#
+#     futures_list = [thread_pool.submit(_split_piece, piece, dataset.fs.open) for piece in dataset.pieces]
+#     result = [item for f in futures_list for item in f.result()]
+#     thread_pool.shutdown()
+#     return result
 
-    # We make a dictionary of how many row groups are in each file in
-    # order to split them. The Parquet Metadata file stores paths as the
-    # relative path from the dataset base dir.
-    row_groups_per_file = dict()
-    for i in range(dataset.metadata.num_row_groups):
-        row_group = dataset.metadata.row_group(i)
-        path = row_group.column(0).file_path
-        row_groups_per_file[path] = row_groups_per_file.get(path, 0) + 1
-
-    base_path = os.path.normpath(os.path.dirname(dataset.metadata_path))
-    split_pieces = []
-    for piece in dataset.pieces:
-        # Since the pieces are absolute path, we get the
-        # relative path to the dataset base dir to fetch the
-        # number of row groups in the file
-        relative_path = os.path.relpath(piece.path, base_path)
-
-        # If the path is not in the metadata file, that means there are
-        # no row groups in that file and that file should be skipped
-        if relative_path not in row_groups_per_file:
-            continue
-
-        for row_group in range(row_groups_per_file[relative_path]):
-            split_piece = pq.ParquetDatasetPiece(piece.path, open_file_func=dataset.fs.open, row_group=row_group,
-                                                 partition_keys=piece.partition_keys)
-            split_pieces.append(split_piece)
-
-    return split_pieces
-
-
-def _split_piece(piece, fs_open):
-    metadata = piece.get_metadata()
-    return [pq.ParquetDatasetPiece(piece.path, open_file_func=fs_open,
-                                   row_group=row_group,
-                                   partition_keys=piece.partition_keys)
-            for row_group in range(metadata.num_row_groups)]
-
-
-def _split_row_groups_from_footers(dataset):
-    """Split the row groups by reading the footers of the parquet pieces"""
-
-    logger.info('Recovering rowgroup information for the entire dataset. This can take a long time for datasets with '
-                'large number of files. If this dataset was generated by Petastorm '
-                '(i.e. by using "with materialize_dataset(...)") and you still see this message, '
-                'this indicates that the materialization did not finish successfully.')
-
-    thread_pool = futures.ThreadPoolExecutor()
-
-    futures_list = [thread_pool.submit(_split_piece, piece, dataset.fs.open) for piece in dataset.pieces]
-    result = [item for f in futures_list for item in f.result()]
-    thread_pool.shutdown()
-    return result
-
-
-def get_schema(dataset):
+def get_schema(dataset: pq.ParquetDataset) -> Unischema:
     """Retrieves schema object stored as part of dataset methadata.
 
     :param dataset: an instance of :class:`pyarrow.parquet.ParquetDataset object`
     :return: A :class:`petastorm.unischema.Unischema` object
     """
-    if not dataset.common_metadata:
+    common_metadata_file_path = common_metadata_path(dataset, '_common_metadata')
+    if path_exists(dataset.filesystem, common_metadata_file_path):
+        dataset_metadata_dict = get_dataset_metadata_dict(common_metadata_file_path, filesystem=dataset.filesystem)
+    else:
+        dataset_metadata_dict = {}
+
+    if not dataset_metadata_dict:
         raise PetastormMetadataError(
             'Could not find _common_metadata file. Use materialize_dataset(..) in'
             ' petastorm.etl.dataset_metadata.py to generate this file in your ETL code.'
             ' You can generate it on an existing dataset using petastorm-generate-metadata.py')
-
-    dataset_metadata_dict = dataset.common_metadata.metadata
 
     # Read schema
     if UNISCHEMA_KEY not in dataset_metadata_dict:
@@ -399,10 +387,10 @@ def get_schema_from_dataset_url(dataset_url_or_urls, hdfs_driver='libhdfs3', sto
                                                          storage_options=storage_options,
                                                          filesystem=filesystem)
 
-    dataset = pq.ParquetDataset(path_or_paths, filesystem=fs, validate_schema=False, metadata_nthreads=10)
+    dataset = pq.ParquetDataset(path_or_paths, filesystem=fs)
 
     # Get a unischema stored in the dataset metadata.
-    stored_schema = get_schema(dataset)
+    stored_schema = infer_or_load_unischema(dataset)
 
     return stored_schema
 

@@ -83,7 +83,7 @@ def _assert_equal_ngram(actual_ngram, expected_ngram):
             if isinstance(expected_field, Decimal) or isinstance(expected_field, str):
                 # Tensorflow returns all strings as bytes in python3. So we will need to decode it
                 actual_field = actual_field.decode()
-            elif isinstance(expected_field, np.ndarray) and expected_field.dtype.type == np.unicode_:
+            elif isinstance(expected_field, np.ndarray) and expected_field.dtype.type == np.str_:
                 actual_field = np.array([item.decode() for item in actual_field])
 
             if isinstance(expected_field, Decimal):

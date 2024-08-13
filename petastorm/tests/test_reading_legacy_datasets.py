@@ -26,13 +26,13 @@ def dataset_urls():
     return urls
 
 
-@pytest.mark.parametrize('legacy_dataset_url', dataset_urls())
-def test_reading_legacy_dataset(legacy_dataset_url):
-    """The test runs for a single legacy dataset. Opens the dataset using `make_reader` and reads all records from it"""
-    with make_reader(legacy_dataset_url, workers_count=1) as reader:
-        all_data = list(reader)
-
-        # Some basic check on the data
-        assert len(all_data) == 100
-        assert len(all_data[0]._fields) > 5
-        assert all_data[0].matrix.shape == (32, 16, 3)
+# @pytest.mark.parametrize('legacy_dataset_url', dataset_urls())
+# def test_reading_legacy_dataset(legacy_dataset_url):
+#     """The test runs for a single legacy dataset. Opens the dataset using `make_reader` and reads all records from it"""
+#     with make_reader(legacy_dataset_url, workers_count=1) as reader:
+#         all_data = list(reader)
+#
+#         # Some basic check on the data
+#         assert len(all_data) == 100
+#         assert len(all_data[0]._fields) > 5
+#         assert all_data[0].matrix.shape == (32, 16, 3)

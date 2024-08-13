@@ -16,13 +16,15 @@ from __future__ import division
 import hashlib
 import threading
 from collections.abc import Iterable
+from typing import Tuple, Set
 
 import numpy as np
 from pyarrow import parquet as pq
-from pyarrow.parquet import ParquetFile
+from pyarrow.dataset import ParquetFileFragment, get_partition_keys
 
 from petastorm import utils
 from petastorm.cache import NullCache
+from petastorm.etl.dataset_metadata import RowGroupIndices
 from petastorm.workers_pool import EmptyResultError
 from petastorm.workers_pool.worker_base import WorkerBase
 
@@ -115,13 +117,14 @@ class PyDictReaderWorker(WorkerBase):
         # We create datasets lazily in the first invocation of 'def process'. This speeds up startup time since
         # all Worker constructors are serialized
         self._dataset = None
+        self._partition_columns = None
 
     @staticmethod
     def new_results_queue_reader():
         return PyDictReaderWorkerResultsQueueReader()
 
     # pylint: disable=arguments-differ
-    def process(self, piece_index, worker_predicate, shuffle_row_drop_partition):
+    def process(self, piece_index: int, worker_predicate, shuffle_row_drop_partition: Tuple[int, int]):
         """Main worker function. Loads and returns all rows matching the predicate from a rowgroup
 
         Looks up the requested piece (a single row-group in a parquet file). If a predicate is specified,
@@ -138,12 +141,12 @@ class PyDictReaderWorker(WorkerBase):
             self._dataset = pq.ParquetDataset(
                 self._dataset_path,
                 filesystem=self._filesystem,
-                validate_schema=False, filters=self._arrow_filters)
+                filters=self._arrow_filters)
 
-        piece = self._split_pieces[piece_index]
+        row_group_indices: RowGroupIndices = self._split_pieces[piece_index]
 
         # Create pyarrow file system
-        parquet_file = ParquetFile(self._dataset.fs.open(piece.path))
+        parquet_file = self._dataset.fragments[row_group_indices.fragment_index]
 
         if not isinstance(self._local_cache, NullCache):
             if worker_predicate:
@@ -153,7 +156,10 @@ class PyDictReaderWorker(WorkerBase):
                 raise RuntimeError('Local cache is not supported together with shuffle_row_drop_partitions > 1')
 
         if worker_predicate:
-            all_cols = self._load_rows_with_predicate(parquet_file, piece, worker_predicate, shuffle_row_drop_partition)
+            all_cols = self._load_rows_with_predicate(pq_file=parquet_file,
+                                                      piece=row_group_indices,
+                                                      worker_predicate=worker_predicate,
+                                                      shuffle_row_drop_partition=shuffle_row_drop_partition)
         else:
             # Using hash of the dataset path with the relative path in order to:
             #  1. Make sure if a common cache serves multiple processes (e.g. redis), we don't have conflicts
@@ -164,9 +170,11 @@ class PyDictReaderWorker(WorkerBase):
             _dataset_path_for_hash = "_".join(self._dataset_path) if isinstance(self._dataset_path,
                                                                                 Iterable) else self._dataset_path
             cache_key = '{}:{}:{}'.format(hashlib.md5(_dataset_path_for_hash.encode('utf-8')).hexdigest(),
-                                          piece.path, piece_index)
+                                          row_group_indices.fragment_path, piece_index)
             all_cols = self._local_cache.get(cache_key,
-                                             lambda: self._load_rows(parquet_file, piece, shuffle_row_drop_partition))
+                                             lambda: self._load_rows(pq_file=parquet_file,
+                                                                     piece=row_group_indices,
+                                                                     shuffle_row_drop_range=shuffle_row_drop_partition))
 
         if self._ngram:
             all_cols = self._ngram.form_ngram(data=all_cols, schema=self._schema)
@@ -174,18 +182,14 @@ class PyDictReaderWorker(WorkerBase):
         if all_cols:
             self.publish_func(all_cols)
 
-    def _load_rows(self, pq_file, piece, shuffle_row_drop_range):
+    def _load_rows(self, pq_file: ParquetFileFragment, piece: RowGroupIndices, shuffle_row_drop_range: Tuple[int, int]):
         """Loads all rows from a piece"""
+        column_names = set(field.name for field in self._schema.fields.values())
 
-        # pyarrow would fail if we request a column names that the dataset is partitioned by, so we strip them from
-        # the `columns` argument.
-        partitions = self._dataset.partitions
-        # self._dataset.partitions is None, if make_reader is created directly from a parquet file
-        # (and not a directory with *.parquet files)
-        partition_names = partitions.partition_names if partitions else set()
-        column_names = set(field.name for field in self._schema.fields.values()) - partition_names
-
-        all_rows = self._read_with_shuffle_row_drop(piece, pq_file, column_names, shuffle_row_drop_range)
+        all_rows = self._read_with_shuffle_row_drop(piece=piece,
+                                                    pq_file=pq_file,
+                                                    column_names=column_names,
+                                                    shuffle_row_drop_partition=shuffle_row_drop_range)
 
         all_rows = [utils.decode_row(row, self._schema) for row in all_rows]
 
@@ -194,7 +198,7 @@ class PyDictReaderWorker(WorkerBase):
 
         return all_rows
 
-    def _load_rows_with_predicate(self, pq_file, piece, worker_predicate, shuffle_row_drop_partition):
+    def _load_rows_with_predicate(self, pq_file: ParquetFileFragment, piece: RowGroupIndices, worker_predicate, shuffle_row_drop_partition: Tuple[int, int]):
         """Loads all rows that match a predicate from a piece"""
 
         # 1. Read all columns needed by predicate and decode
@@ -202,7 +206,7 @@ class PyDictReaderWorker(WorkerBase):
         # 3. Read the remaining columns and decode
         # 4. Combine with columns already decoded for the predicate.
 
-        # Split all column names into ones that are needed by predicateand the rest.
+        # Split all column names into ones that are needed by predicate and the rest.
         predicate_column_names = set(worker_predicate.get_fields())
 
         if not predicate_column_names:
@@ -216,12 +220,13 @@ class PyDictReaderWorker(WorkerBase):
                              'are not valid schema names: ({})'.format(', '.join(invalid_column_names),
                                                                        ', '.join(all_schema_names)))
 
-        partition_names = self._dataset.partitions.partition_names if self._dataset.partitions else set()
-        other_column_names = all_schema_names - predicate_column_names - partition_names
+        other_column_names = all_schema_names - predicate_column_names
 
         # Read columns needed for the predicate
-        predicate_rows = self._read_with_shuffle_row_drop(piece, pq_file, predicate_column_names,
-                                                          shuffle_row_drop_partition)
+        predicate_rows = self._read_with_shuffle_row_drop(piece=piece,
+                                                          pq_file=pq_file,
+                                                          column_names=predicate_column_names,
+                                                          shuffle_row_drop_partition=shuffle_row_drop_partition)
 
         # Decode values
         decoded_predicate_rows = [
@@ -241,8 +246,10 @@ class PyDictReaderWorker(WorkerBase):
 
         if other_column_names:
             # Read remaining columns
-            other_rows = self._read_with_shuffle_row_drop(piece, pq_file, other_column_names,
-                                                          shuffle_row_drop_partition)
+            other_rows = self._read_with_shuffle_row_drop(piece=piece,
+                                                          pq_file=pq_file,
+                                                          column_names=other_column_names,
+                                                          shuffle_row_drop_partition=shuffle_row_drop_partition)
 
             # Remove rows that were filtered out by the predicate
             filtered_other_rows = [row for i, row in enumerate(other_rows) if match_predicate_mask[i]]
@@ -261,11 +268,22 @@ class PyDictReaderWorker(WorkerBase):
 
         return result
 
-    def _read_with_shuffle_row_drop(self, piece, pq_file, column_names, shuffle_row_drop_partition):
-        # If integer_object_nulls is set to False, nullable integer fields are return as floats
-        # with nulls translated to nans
-        data_frame = piece.read(columns=column_names, partitions=self._dataset.partitions).to_pandas(
-            integer_object_nulls=True)
+    def _read_with_shuffle_row_drop(self, piece: RowGroupIndices,
+                                    pq_file: ParquetFileFragment,
+                                    column_names: Set[str],
+                                    shuffle_row_drop_partition: Tuple[int, int]):
+
+        if not self._ngram:
+            # If not ngram we can subset.
+            # If ngram we have to read the full fragment because we want to access sub-sequences
+            pq_file = pq_file.subset(row_group_ids=[piece.row_group_id])
+
+        partition_dict = get_partition_keys(pq_file.partition_expression)
+        partition_columns = set(partition_dict.keys())
+        non_partitioned_columns = list(column_names - partition_columns)
+
+        data_frame = pq_file.to_table(columns=non_partitioned_columns, filter=self._dataset._filter_expression).to_pandas(integer_object_nulls=True)
+
         if self._shuffle_rows:
             data_frame = data_frame.sample(frac=1, random_state=self._shuffle_seed)
 
@@ -273,7 +291,10 @@ class PyDictReaderWorker(WorkerBase):
         num_partitions = shuffle_row_drop_partition[1]
         this_partition = shuffle_row_drop_partition[0]
 
-        partition_indexes = np.floor(np.arange(num_rows) / (float(num_rows) / min(num_rows, num_partitions)))
+        if num_rows > 0:
+            partition_indexes = np.floor(np.arange(num_rows) / (float(num_rows) / min(num_rows, num_partitions)))
+        else:
+            partition_indexes = np.floor(np.arange(num_rows))
 
         if self._ngram:
             # If we have an ngram we need to take elements from the next partition to build the sequence
@@ -283,4 +304,10 @@ class PyDictReaderWorker(WorkerBase):
                 partition_indexes[next_partition_to_add] = this_partition
 
         selected_dataframe = data_frame.loc[partition_indexes == this_partition]
+
+        # Add back partition data, which is constant for this data fragment
+        for partition_key, partition_value in partition_dict.items():
+            selected_dataframe[partition_key] = partition_value
+
         return selected_dataframe.to_dict('records')
+

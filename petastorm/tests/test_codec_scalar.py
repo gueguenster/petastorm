@@ -24,7 +24,7 @@ from petastorm.unischema import UnischemaField
 
 def test_byte_string():
     codec = ScalarCodec(StringType())
-    field = UnischemaField(name='field_string', numpy_dtype=np.string_, shape=(), codec=codec, nullable=False)
+    field = UnischemaField(name='field_string', numpy_dtype=np.bytes_, shape=(), codec=codec, nullable=False)
 
     assert codec.decode(field, codec.encode(field, 'abc')) == b'abc'
     assert codec.decode(field, codec.encode(field, '')) == b''
@@ -32,7 +32,7 @@ def test_byte_string():
 
 def test_unicode():
     codec = ScalarCodec(StringType())
-    field = UnischemaField(name='field_string', numpy_dtype=np.unicode_, shape=(), codec=codec, nullable=False)
+    field = UnischemaField(name='field_string', numpy_dtype=np.str_, shape=(), codec=codec, nullable=False)
 
     assert codec.decode(field, codec.encode(field, 'abc')) == 'abc'
     assert codec.decode(field, codec.encode(field, '')) == ''
@@ -81,7 +81,7 @@ def test_bad_unischema_field_shape():
 
 def test_encode_scalar_bool():
     codec = ScalarCodec(BooleanType())
-    field = UnischemaField(name='field_bool', numpy_dtype=np.bool, shape=(), codec=codec, nullable=False)
+    field = UnischemaField(name='field_bool', numpy_dtype=np.bool_, shape=(), codec=codec, nullable=False)
 
     encoded = codec.encode(field, np.bool_(True))
     assert isinstance(codec.encode(field, encoded), bool)
@@ -111,7 +111,7 @@ def test_encode_scalar_float():
 def test_encode_scalar_string():
     codec = ScalarCodec(StringType())
     expected = 'surprise'
-    field = UnischemaField(name='field_string', numpy_dtype=np.unicode_, shape=(), codec=codec, nullable=False)
+    field = UnischemaField(name='field_string', numpy_dtype=np.str_, shape=(), codec=codec, nullable=False)
     encoded = codec.encode(field, expected)
     assert isinstance(encoded, str)
     assert expected == encoded

@@ -37,15 +37,16 @@ _CACHE_FAKE_DATASET_OPTION = '--cache-synthetic-dataset'
 logger = logging.getLogger(__name__)
 
 
-def pytest_logger_config(logger_config):
-    logger_config.add_loggers(
-        [
-            'petastorm.workers_pool.process_pool',
-            'petastorm.workers_pool.thread_pool',
-            'petastorm.workers_pool.dummy_pool',
-            'petastorm.workers_pool.ventilator',
-            'petastorm.reader',
-        ], stdout_level='debug')
+# It creates issues with pytest
+# def pytest_logger_config(logger_config):
+#     logger_config.add_loggers(
+#         [
+#             'petastorm.workers_pool.process_pool',
+#             'petastorm.workers_pool.thread_pool',
+#             'petastorm.workers_pool.dummy_pool',
+#             'petastorm.workers_pool.ventilator',
+#             'petastorm.reader',
+#         ], stdout_level='debug')
 
 
 def pytest_addoption(parser):

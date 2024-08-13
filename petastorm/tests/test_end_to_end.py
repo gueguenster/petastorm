@@ -20,7 +20,7 @@ from shutil import rmtree, copytree
 from unittest import mock
 
 import numpy as np
-import pyarrow.hdfs
+import pyarrow.fs
 import pytest
 from pyspark.sql import SparkSession
 from pyspark.sql.types import LongType, ShortType, StringType
@@ -528,7 +528,7 @@ def test_invalid_schema_field(synthetic_dataset, reader_factory):
     # Let's assume we are selecting columns using a schema which is different from the one
     # stored in the dataset. Would expect to get a reasonable error message
     BogusSchema = Unischema('BogusSchema', [
-        UnischemaField('partition_key', np.string_, (), ScalarCodec(StringType()), False),
+        UnischemaField('partition_key', np.str_, (), ScalarCodec(StringType()), False),
         UnischemaField('id', np.int64, (), ScalarCodec(LongType()), False),
         UnischemaField('bogus_key', np.int32, (), ScalarCodec(ShortType()), False)])
 
@@ -717,8 +717,8 @@ def test_rowgroup_selector_nullable_array_field(synthetic_dataset, reader_factor
                                                               ['100'])) as reader:
         count = sum(1 for _ in reader)
         # This field contain id string, generated like this
-        #   None if id % 5 == 0 else np.asarray([], dtype=np.string_) if id % 4 == 0 else
-        #   np.asarray([str(i+id) for i in xrange(2)], dtype=np.string_)
+        #   None if id % 5 == 0 else np.asarray([], dtype=np.str_) if id % 4 == 0 else
+        #   np.asarray([str(i+id) for i in xrange(2)], dtype=np.str_)
         # hence '100' could be present in row id 99 as 99+1 and row id 100 as 100+0
         # but row 100 will be skipped by ' None if id % 5 == 0' condition, so only one row group should be selected
         assert 10 == count

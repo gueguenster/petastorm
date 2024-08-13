@@ -20,7 +20,8 @@ from multiprocessing import Pool
 import numpy as np
 import pyarrow
 from future.utils import raise_with_traceback
-from pyarrow.filesystem import LocalFileSystem
+from pyarrow.fs import LocalFileSystem, FileType
+from pyarrow.parquet import ParquetDataset, ParquetFile
 
 logger = logging.getLogger(__name__)
 
@@ -85,48 +86,61 @@ def decode_row(row, schema):
     return decoded_row
 
 
-def add_to_dataset_metadata(dataset, key, value):
+def path_exists(fs, path):
+    file_info = fs.get_file_info(path)
+    return not file_info.type == FileType.NotFound
+
+
+def common_metadata_path(dataset: ParquetDataset, suffix: str = "_common_metadata") -> str:
+    """
+    Returns the common metadata path for the dataset.
+    """
+    if isinstance(dataset.files, list) and len(dataset.files) > 0:
+        base_path = os.path.dirname(dataset.files[0])
+    else:
+        raise Exception(f"{dataset} does not contain any files.")
+
+    file_path = base_path.rstrip('/') + '/' + suffix
+    return file_path
+
+
+def get_dataset_metadata_dict(dataset_metadata_path: str, filesystem=None) -> dict:
+    """
+    Returns the dictionary from the common dataset metadata path.
+    """
+    pqf = ParquetFile(dataset_metadata_path, filesystem=filesystem)
+    return pqf.schema.to_arrow_schema().metadata
+
+
+def add_to_dataset_metadata(dataset: ParquetDataset, key: bytes, value: bytes):
     """
     Adds a key and value to the parquet metadata file of a parquet dataset.
     :param dataset: (ParquetDataset) parquet dataset
-    :param key:     (str) key of metadata entry
-    :param value:   (str) value of metadata
+    :param key:     (bytes) key of metadata entry
+    :param value:   (bytes) value of metadata
     """
-    if not isinstance(dataset.paths, str):
-        raise ValueError('Expected dataset.paths to be a single path, not a list of paths')
 
-    metadata_file_path = dataset.paths.rstrip('/') + '/_metadata'
-    common_metadata_file_path = dataset.paths.rstrip('/') + '/_common_metadata'
-    common_metadata_file_crc_path = dataset.paths.rstrip('/') + '/._common_metadata.crc'
+    common_metadata_file_path = common_metadata_path(dataset=dataset, suffix='_common_metadata')
+    common_metadata_file_crc_path = common_metadata_path(dataset=dataset, suffix='._common_metadata.crc')
+    metadata_file_path = common_metadata_path(dataset=dataset, suffix='_metadata')
 
     # If the metadata file already exists, add to it.
     # Otherwise fetch the schema from one of the existing parquet files in the dataset
-    if dataset.fs.exists(common_metadata_file_path):
-        with dataset.fs.open(common_metadata_file_path) as f:
-            arrow_metadata = pyarrow.parquet.read_metadata(f)
-    elif dataset.fs.exists(metadata_file_path):
-        # If just the metadata file exists and not the common metadata file, copy the contents of
-        # the metadata file to the common_metadata file for backwards compatibility
-        with dataset.fs.open(metadata_file_path) as f:
-            arrow_metadata = pyarrow.parquet.read_metadata(f)
-    else:
-        arrow_metadata = dataset.pieces[0].get_metadata()
-
-    base_schema = arrow_metadata.schema.to_arrow_schema()
+    fs = dataset.filesystem
+    metadata_dict = dataset.schema.metadata
+    if path_exists(fs, common_metadata_file_path):
+        metadata_dict = get_dataset_metadata_dict(common_metadata_file_path, fs)
+    elif path_exists(fs, metadata_file_path):
+        metadata_dict = get_dataset_metadata_dict(metadata_file_path, fs)
 
     # base_schema.metadata may be None, e.g.
-    metadata_dict = base_schema.metadata or dict()
+    metadata_dict = metadata_dict or dict()
     metadata_dict[key] = value
-    schema = base_schema.with_metadata(metadata_dict)
-
-    with dataset.fs.open(common_metadata_file_path, 'wb') as metadata_file:
-        pyarrow.parquet.write_metadata(schema, metadata_file)
+    new_schema = dataset.schema.with_metadata(metadata_dict)
+    pyarrow.parquet.write_metadata(new_schema, common_metadata_file_path, filesystem=fs)
 
     # We have just modified _common_metadata file, but the filesystem implementation used by pyarrow does not
     # update the .crc value. We better delete the .crc to make sure there is no mismatch between _common_metadata
     # content and the checksum.
-    if isinstance(dataset.fs, LocalFileSystem) and dataset.fs.exists(common_metadata_file_crc_path):
-        try:
-            dataset.fs.rm(common_metadata_file_crc_path)
-        except NotImplementedError:
-            os.remove(common_metadata_file_crc_path)
+    if path_exists(fs, common_metadata_file_crc_path):
+        fs.delete_file(common_metadata_file_crc_path)

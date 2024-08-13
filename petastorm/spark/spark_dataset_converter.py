@@ -25,7 +25,7 @@ from multiprocessing.pool import ThreadPool
 from typing import List, Any
 
 import pyspark
-from pyarrow import LocalFileSystem
+from pyarrow.fs import LocalFileSystem
 from pyspark.sql.session import SparkSession
 from pyspark.sql.types import ArrayType, DoubleType, FloatType
 from six.moves.urllib.parse import urlparse

@@ -21,6 +21,7 @@ import hashlib
 import numpy as np
 import six
 import sys
+from pyarrow.compute import Expression
 
 
 @six.add_metaclass(abc.ABCMeta)

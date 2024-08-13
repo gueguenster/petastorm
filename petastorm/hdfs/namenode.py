@@ -21,7 +21,7 @@ from xml.etree import ElementTree as ET
 
 import pyarrow
 import six
-from pyarrow.hdfs import HadoopFileSystem
+from pyarrow.fs import HadoopFileSystem
 from pyarrow.lib import ArrowIOError
 from six.moves.urllib.parse import urlparse
 

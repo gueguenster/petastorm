@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-
+import os
 from six.moves import cPickle as pickle
 
 import io
@@ -30,6 +30,8 @@ safe_modules = {
     "__builtin__",
 }
 
+# NamedTuple pickling problem, handled at https://github.com/apache/spark/blob/master/python/pyspark/serializers.py#L360C20-L360C51
+os.environ["PYSPARK_ENABLE_NAMEDTUPLE_PATCH"] = "1"
 
 class RestrictedUnpickler(pickle.Unpickler):
 

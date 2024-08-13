@@ -163,7 +163,7 @@ def _assert_fields_eq(actual, desired):
     if isinstance(desired, Decimal) or isinstance(actual, bytes):
         # Tensorflow returns all strings as bytes in python3. So we will need to decode it
         actual = actual.decode()
-    elif isinstance(desired, np.ndarray) and desired.dtype.type == np.unicode_:
+    elif isinstance(desired, np.ndarray) and desired.dtype.type == np.str_:
         actual = np.array([item.decode() for item in actual])
 
     if isinstance(desired, Decimal):

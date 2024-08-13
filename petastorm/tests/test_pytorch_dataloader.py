@@ -210,7 +210,7 @@ def test_with_shuffling_buffer_inmem(synthetic_dataset, reader_factory):
 def test_with_batch_reader(scalar_dataset, shuffling_queue_capacity, data_loader_type):
     """See if we are getting correct batch sizes when using DataLoader with make_batch_reader"""
     pytorch_compatible_fields = [k for k, v in scalar_dataset.data[0].items()
-                                 if not isinstance(v, (np.datetime64, np.unicode_))]
+                                 if not isinstance(v, (np.datetime64, np.str_))]
     with data_loader_type(make_batch_reader(scalar_dataset.url, schema_fields=pytorch_compatible_fields),
                           batch_size=3, shuffling_queue_capacity=shuffling_queue_capacity) as loader:
         batches = list(loader)
@@ -226,7 +226,7 @@ def test_with_batch_reader(scalar_dataset, shuffling_queue_capacity, data_loader
 def test_with_batch_reader_inmem(scalar_dataset, shuffle):
     """See if we are getting correct batch sizes when using InMemBatchedDataLoader with make_batch_reader"""
     pytorch_compatible_fields = [k for k, v in scalar_dataset.data[0].items()
-                                 if not isinstance(v, (np.datetime64, np.unicode_))]
+                                 if not isinstance(v, (np.datetime64, np.str_))]
     with InMemBatchedDataLoader(make_batch_reader(scalar_dataset.url, schema_fields=pytorch_compatible_fields),
                                 batch_size=3, shuffle=shuffle, rows_capacity=100) as loader:
         batches = list(loader)

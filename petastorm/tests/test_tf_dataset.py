@@ -84,7 +84,7 @@ def test_with_one_shot_iterator(synthetic_dataset, reader_factory):
                     if isinstance(expected[key], str):
                         # Tensorflow returns all strings as bytes in python3. So we will need to decode it
                         actual_value = actual[key].decode()
-                    elif isinstance(expected[key], np.ndarray) and expected[key].dtype.type == np.unicode_:
+                    elif isinstance(expected[key], np.ndarray) and expected[key].dtype.type == np.str_:
                         actual_value = np.array([item.decode() for item in actual[key]])
                     else:
                         actual_value = actual[key]

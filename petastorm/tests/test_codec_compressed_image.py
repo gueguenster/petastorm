@@ -46,7 +46,7 @@ def test_jpeg():
 
         actual_image = codec.decode(field, codec.encode(field, expected_image))
         # Check a non exact match between the images. Verifying reasonable mean absolute error (up to 10)
-        mean_abs_error = np.mean(np.abs(expected_image.astype(np.float) - actual_image.astype(np.float)))
+        mean_abs_error = np.mean(np.abs(expected_image.astype(np.float32) - actual_image.astype(np.float32)))
         # The threshold is relatively high as compressing random images with jpeg results in a significant
         # quality loss
         assert mean_abs_error < 50
@@ -64,7 +64,7 @@ def test_jpeg_quality():
         codec = CompressedImageCodec('jpeg', quality=quality)
         field = UnischemaField(name='field_image', numpy_dtype=np.uint8, shape=size, codec=codec, nullable=False)
         actual_image = codec.decode(field, codec.encode(field, expected_image))
-        errors[quality] = np.mean(np.abs(expected_image.astype(np.float) - actual_image.astype(np.float)))
+        errors[quality] = np.mean(np.abs(expected_image.astype(np.float32) - actual_image.astype(np.float32)))
 
     assert errors[10] > errors[99]
 

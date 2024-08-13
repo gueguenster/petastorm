@@ -138,7 +138,7 @@ class NdarrayCodec(DataframeColumnCodec):
         if isinstance(value, np.ndarray):
             if expected_dtype != value.dtype.type:
                 raise ValueError('Unexpected type of {} feature. '
-                                 'Expected {}. Got {}'.format(unischema_field.name, expected_dtype, value.dtype))
+                                 'Expected {}. Got {}: {}'.format(unischema_field.name, expected_dtype, value.dtype, value))
 
             expected_shape = unischema_field.shape
             if not _is_compliant_shape(value.shape, expected_shape):
@@ -146,7 +146,7 @@ class NdarrayCodec(DataframeColumnCodec):
                                  'Expected {}. Got {}'.format(unischema_field.name, expected_shape, value.shape))
         else:
             raise ValueError('Unexpected type of {} feature. '
-                             'Expected ndarray of {}. Got {}'.format(unischema_field.name, expected_dtype, type(value)))
+                             'Expected ndarray of {}. Got {}: {}'.format(unischema_field.name, expected_dtype, type(value), value))
 
         memfile = BytesIO()
         np.save(memfile, value)

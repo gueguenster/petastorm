@@ -22,7 +22,7 @@ from petastorm.tests.test_common import TestSchema
 ALL_FIELDS = set(TestSchema.fields.values())
 NULLABLE_FIELDS = {f for f in TestSchema.fields.values() if f.nullable}
 STRING_TENSOR_FIELDS = {f for f in TestSchema.fields.values()
-                        if len(f.shape) > 0 and f.numpy_dtype in (np.string_, np.unicode_)}
+                        if len(f.shape) > 0 and f.numpy_dtype in (np.str_, np.str_)}
 
 PYTORCH_COMPATIBLE_FIELDS = ALL_FIELDS - STRING_TENSOR_FIELDS - NULLABLE_FIELDS
 
@@ -33,7 +33,7 @@ def _noop_collate(alist):
 
 def _str_to_int(sample):
     for k, v in sample.items():
-        if v is not None and isinstance(v, np.ndarray) and v.dtype.type in (np.string_, np.unicode_):
+        if v is not None and isinstance(v, np.ndarray) and v.dtype.type in (np.str_, np.str_):
             sample[k] = np.zeros_like(v, dtype=np.int8)
     return sample
 

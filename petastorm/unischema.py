@@ -26,7 +26,7 @@ from typing import Dict, Any, Tuple, Optional, NamedTuple
 import numpy as np
 import pyarrow as pa
 import six
-from pyarrow.lib import ListType
+from pyarrow.lib import ListType, DictionaryType
 from pyarrow.lib import StructType as pyStructType
 from six import string_types
 
@@ -145,9 +145,9 @@ def _numpy_to_spark_mapping():
                     np.int64: T.LongType(),
                     np.float32: T.FloatType(),
                     np.float64: T.DoubleType(),
-                    np.string_: T.StringType(),
                     np.str_: T.StringType(),
-                    np.unicode_: T.StringType(),
+                    # np.string_: T.ByteType(),
+                    np.bytes_: T.ByteType(),
                     np.bool_: T.BooleanType(),
                 })
 
@@ -314,26 +314,15 @@ class Unischema(object):
         :param omit_unsupported_fields: :class:`Boolean`
         :return: A :class:`Unischema` object.
         """
-        meta = parquet_dataset.pieces[0].get_metadata()
-        arrow_schema = meta.schema.to_arrow_schema()
+        arrow_schema = parquet_dataset.schema
         unischema_fields = []
-
-        for partition in (parquet_dataset.partitions or []):
-            if (pa.types.is_binary(partition.dictionary.type) and six.PY2) or \
-                    (pa.types.is_string(partition.dictionary.type) and six.PY3):
-                numpy_dtype = np.str_
-            elif pa.types.is_int64(partition.dictionary.type):
-                numpy_dtype = np.int64
-            else:
-                raise RuntimeError(('Expected partition type to be one of currently supported types: string or int64. '
-                                    'Got {}').format(partition.dictionary.type))
-
-            unischema_fields.append(UnischemaField(partition.name, numpy_dtype, (), None, False))
 
         for column_name in arrow_schema.names:
             arrow_field = arrow_schema.field(column_name)
             field_type = arrow_field.type
             field_shape = ()
+            if isinstance(field_type, DictionaryType):
+                field_type = field_type.value_type
             if isinstance(field_type, ListType):
                 if isinstance(field_type.value_type, ListType) or isinstance(field_type.value_type, pyStructType):
                     warnings.warn('[ARROW-1644] Ignoring unsupported structure %r for field %r'
@@ -478,7 +467,7 @@ def _numpy_and_codec_from_arrow_type(field_type):
     elif types.is_int64(field_type):
         np_type = np.int64
     elif types.is_string(field_type):
-        np_type = np.unicode_
+        np_type = np.str_
     elif types.is_boolean(field_type):
         np_type = np.bool_
     elif types.is_float32(field_type):
@@ -488,9 +477,9 @@ def _numpy_and_codec_from_arrow_type(field_type):
     elif types.is_decimal(field_type):
         np_type = Decimal
     elif types.is_binary(field_type):
-        np_type = np.string_
+        np_type = np.bytes_
     elif types.is_fixed_size_binary(field_type):
-        np_type = np.string_
+        np_type = np.bytes_
     elif types.is_date(field_type):
         np_type = np.datetime64
     elif types.is_timestamp(field_type):

@@ -19,7 +19,7 @@ import six
 from six.moves.urllib.parse import urlparse, urlunparse
 from fsspec.core import strip_protocol
 from fsspec.utils import update_storage_options
-
+from pyarrow.fs import LocalFileSystem
 from petastorm.hdfs.namenode import HdfsNamenodeResolver, HdfsConnector
 
 logger = logging.getLogger(__name__)
@@ -85,8 +85,8 @@ class FilesystemResolver(object):
 
         elif self._parsed_dataset_url.scheme == 'file':
             # Case 2: definitely local
-            self._filesystem = pyarrow.localfs
-            self._filesystem_factory = lambda: pyarrow.localfs
+            self._filesystem = LocalFileSystem()
+            self._filesystem_factory = lambda: LocalFileSystem()
 
         elif self._parsed_dataset_url.scheme == 'hdfs':
 

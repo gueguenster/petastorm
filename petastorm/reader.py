@@ -15,6 +15,7 @@
 import collections.abc
 import logging
 import warnings
+from typing import List
 
 import six
 from pyarrow import parquet as pq
@@ -23,7 +24,7 @@ from petastorm.arrow_reader_worker import ArrowReaderWorker
 from petastorm.cache import NullCache
 from petastorm.errors import NoDataAvailableError
 from petastorm.etl import dataset_metadata, rowgroup_indexing
-from petastorm.etl.dataset_metadata import PetastormMetadataError, infer_or_load_unischema
+from petastorm.etl.dataset_metadata import PetastormMetadataError, infer_or_load_unischema, RowGroupIndices
 from petastorm.fs_utils import get_filesystem_and_path_or_paths, normalize_dir_url
 from petastorm.local_disk_cache import LocalDiskCache
 from petastorm.ngram import NGram
@@ -417,9 +418,7 @@ class Reader(object):
 
         self.is_batched_reader = is_batched_reader
         # 1. Resolve dataset path (hdfs://, file://) and open the parquet storage (dataset)
-        self.dataset = pq.ParquetDataset(dataset_path, filesystem=pyarrow_filesystem,
-                                         validate_schema=False, metadata_nthreads=10,
-                                         filters=filters)
+        self.dataset = pq.ParquetDataset(dataset_path, filesystem=pyarrow_filesystem, filters=filters)
 
         stored_schema = infer_or_load_unischema(self.dataset)
 
@@ -466,13 +465,14 @@ class Reader(object):
                           "Use seed to apply randomization effects on sharding row groups.")
             # Use shard_seed to overwrite, to be removed in future.
             _shard_seed = shard_seed
-        filtered_row_group_indexes, worker_predicate = self._filter_row_groups(self.dataset, row_groups, predicate,
-                                                                               rowgroup_selector, cur_shard,
-                                                                               shard_count, _shard_seed)
+        filtered_row_groups, worker_predicate = self._filter_row_groups(self.dataset, row_groups, predicate,
+                                                                        rowgroup_selector, cur_shard,
+                                                                        shard_count, _shard_seed)
         # 4. Create a rowgroup ventilator object
         normalized_shuffle_row_drop_partitions = \
-            self._normalize_shuffle_options(shuffle_row_drop_partitions, self.dataset)
-        self.ventilator = self._create_ventilator(filtered_row_group_indexes, shuffle_row_groups,
+            self._normalize_shuffle_options(shuffle_row_drop_partitions, filtered_row_groups, row_groups)
+        self.ventilator = self._create_ventilator(filtered_row_groups,
+                                                  shuffle_row_groups,
                                                   normalized_shuffle_row_drop_partitions,
                                                   self.num_epochs, worker_predicate,
                                                   self._workers_pool.workers_count + _VENTILATE_EXTRA_ROWGROUPS,
@@ -487,6 +487,10 @@ class Reader(object):
 
         self.last_row_consumed = False
         self.stopped = False
+
+    def __len__(self):
+        row_groups = dataset_metadata.load_row_groups(self.dataset)
+        return sum([rg.row_group_num_rows for rg in row_groups])
 
     def reset(self):
         """Resets ``Reader`` state and allows to fetch more samples once the ``Reader`` finished reading all epochs,
@@ -544,13 +548,16 @@ class Reader(object):
             self._apply_predicate_to_row_groups(dataset, row_groups, predicate)
 
         if rowgroup_selector:
-            filtered_row_group_indexes = self._apply_row_group_selector(dataset, rowgroup_selector,
-                                                                        filtered_row_group_indexes)
+            raise Exception("RowGroupSelector is not supported.")
+            # filtered_row_group_indexes = self._apply_row_group_selector(dataset, rowgroup_selector,
+            #                                                             filtered_row_group_indexes)
 
         if cur_shard is not None or shard_count is not None:
-            filtered_row_group_indexes = self._partition_row_groups(dataset, row_groups, shard_count,
+            filtered_row_group_indexes = self._partition_row_groups(dataset, row_groups,
+                                                                    shard_count,
                                                                     cur_shard,
-                                                                    filtered_row_group_indexes, seed)
+                                                                    filtered_row_group_indexes,
+                                                                    seed)
 
         if not filtered_row_group_indexes:
             warnings.warn('No matching data is available for loading after rowgroup '
@@ -584,80 +591,83 @@ class Reader(object):
         filtered_row_group_indexes = [index for index in filtered_row_group_indexes if index % shard_count == cur_shard]
         return filtered_row_group_indexes
 
-    def _apply_row_group_selector(self, dataset, rowgroup_selector, filtered_row_group_indexes):
-        """Filters the list of row group indexes using rowgroup selector object. Returns a modified list of rowgroup
-        indexes."""
-
-        if not isinstance(rowgroup_selector, RowGroupSelectorBase):
-            raise ValueError('rowgroup_selector parameter is expected to be derived from RowGroupSelectorBase')
-
-        # Load indexes from metadata
-        available_row_group_indexes = rowgroup_indexing.get_row_group_indexes(dataset)
-
-        required_indexes = rowgroup_selector.get_index_names()
-        if not set(required_indexes).issubset(set(available_row_group_indexes.keys())):
-            raise ValueError('Some of required indexes {} are not available in {}'.format(
-                required_indexes, list(available_row_group_indexes.keys())))
-
-        selected_indexes = rowgroup_selector.select_row_groups(available_row_group_indexes)
-
-        # include only selected_indexes but in filtered_row_group_indexes order
-        filtered_row_group_indexes = [idx for idx in filtered_row_group_indexes if idx in selected_indexes]
-        return filtered_row_group_indexes
+    # def _apply_row_group_selector(self, dataset, rowgroup_selector, filtered_row_group_indexes):
+    #     """Filters the list of row group indexes using rowgroup selector object. Returns a modified list of rowgroup
+    #     indexes."""
+    #
+    #     if not isinstance(rowgroup_selector, RowGroupSelectorBase):
+    #         raise ValueError('rowgroup_selector parameter is expected to be derived from RowGroupSelectorBase')
+    #
+    #     # # Load indexes from metadata
+    #     # available_row_group_indexes = rowgroup_indexing.get_row_group_indexes(dataset)
+    #     #
+    #     # required_indexes = rowgroup_selector.get_index_names()
+    #     # if not set(required_indexes).issubset(set(available_row_group_indexes.keys())):
+    #     #     raise ValueError('Some of required indexes {} are not available in {}'.format(
+    #     #         required_indexes, list(available_row_group_indexes.keys())))
+    #     #
+    #     # selected_indexes = rowgroup_selector.select_row_groups(available_row_group_indexes)
+    #     #
+    #     # # include only selected_indexes but in filtered_row_group_indexes order
+    #     # filtered_row_group_indexes = [idx for idx in filtered_row_group_indexes if idx in selected_indexes]
+    #     # return filtered_row_group_indexes
+    #     return filtered_row_group_indexes
 
     def _apply_predicate_to_row_groups(self, dataset, row_groups, predicate):
         """Filters the list of row group indexes using rowgroup selector object. Returns a modified list of rowgroup
         indexes and a list of worker_predicate: predicates that could not be applied at this level
         (parquet partitioning)."""
 
-        if predicate:
-            if not isinstance(predicate, PredicateBase):
-                raise ValueError('predicate parameter is expected to be derived from PredicateBase')
-            predicate_fields = predicate.get_fields()
-
-            partition_names = dataset.partitions.partition_names if dataset.partitions else set()
-            if set(predicate_fields) == partition_names:
-                assert len(partition_names) == 1, \
-                    'Datasets with only a single partition level supported at the moment'
-
-                filtered_row_group_indexes = []
-                for piece_index, piece in enumerate(row_groups):
-                    partition_name, partition_index = piece.partition_keys[0]
-                    partition_value = dataset.partitions[0].keys[partition_index]
-
-                    # Convert partition value to correct type per the schema
-                    partition_value = self.schema.fields[partition_name].numpy_dtype(partition_value)
-                    if predicate.do_include({partition_name: partition_value}):
-                        filtered_row_group_indexes.append(piece_index)
-                worker_predicate = None
-            else:
-                filtered_row_group_indexes = list(range(len(row_groups)))
-                worker_predicate = predicate
-
-        else:
-            filtered_row_group_indexes = list(range(len(row_groups)))
-            worker_predicate = None
-        return filtered_row_group_indexes, worker_predicate
+        # if predicate:
+        #     if not isinstance(predicate, PredicateBase):
+        #         raise ValueError('predicate parameter is expected to be derived from PredicateBase')
+        #     predicate_fields = predicate.get_fields()
+        #     partition_fields = set([field.name for field in dataset.partitioning.schema])
+        #
+        #     #partition_names = dataset.partitions.partition_names if dataset.partitions else set()
+        #     if len(set(predicate_fields) == partition_names:
+        #         assert len(partition_names) == 1, \
+        #             'Datasets with only a single partition level supported at the moment'
+        #
+        #         filtered_row_group_indexes = []
+        #         for piece_index, piece in enumerate(row_groups):
+        #             partition_name, partition_index = piece.partition_keys[0]
+        #             partition_value = dataset.partitions[0].keys[partition_index]
+        #
+        #             # Convert partition value to correct type per the schema
+        #             partition_value = self.schema.fields[partition_name].numpy_dtype(partition_value)
+        #             if predicate.do_include({partition_name: partition_value}):
+        #                 filtered_row_group_indexes.append(piece_index)
+        #         worker_predicate = None
+        #     else:
+        #         filtered_row_group_indexes = list(range(len(row_groups)))
+        #         worker_predicate = predicate
+        #
+        # else:
+        #     filtered_row_group_indexes = list(range(len(row_groups)))
+        #     worker_predicate = None
+        filtered_row_group_indexes = list(range(len(row_groups)))
+        return filtered_row_group_indexes, predicate
 
     @staticmethod
-    def _normalize_shuffle_options(shuffle_row_drop_partitions, dataset):
-        """Checks that shuffle_options doesnt ask for more patitions than rows in a row group.
+    def _normalize_shuffle_options(shuffle_row_drop_partitions: int, filtered_row_group_indexes: List[int], row_groups: list[RowGroupIndices]):
+        """Checks that shuffle_options doesnt ask for more partitions than rows in a row group.
         This prevents sending partitions to workers which will result in not reading anything."""
-        if shuffle_row_drop_partitions > 1 and dataset.metadata and dataset.metadata.num_row_groups:
+        if shuffle_row_drop_partitions > 1:
             max_rows_in_row_group = 1
-            for i in six.moves.xrange(dataset.metadata.num_row_groups):
-                max_rows_in_row_group = max(max_rows_in_row_group, dataset.metadata.row_group(i).num_rows)
-
+            for idx in filtered_row_group_indexes:
+                max_rows_in_row_group = max(max_rows_in_row_group, row_groups[idx].row_group_num_rows)
             return min(shuffle_row_drop_partitions, max_rows_in_row_group)
         return shuffle_row_drop_partitions
 
-    def _create_ventilator(self, row_group_indexes, shuffle_row_groups, shuffle_row_drop_partitions,
+
+    def _create_ventilator(self, row_groups, shuffle_row_groups, shuffle_row_drop_partitions,
                            num_epochs, worker_predicate, max_ventilation_queue_size, seed):
         items_to_ventilate = []
-        for piece_index in row_group_indexes:
+        for rg_index in row_groups:
             for shuffle_row_drop_partition in range(shuffle_row_drop_partitions):
                 items_to_ventilate.append(
-                    {'piece_index': piece_index,
+                    {'piece_index': rg_index,
                      'worker_predicate': worker_predicate,
                      'shuffle_row_drop_partition': (shuffle_row_drop_partition,
                                                     shuffle_row_drop_partitions)})

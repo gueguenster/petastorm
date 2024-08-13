@@ -15,6 +15,7 @@
 import numpy as np
 import pytest
 import pyarrow
+from pyarrow.fs import LocalFileSystem
 from pyspark.sql import SparkSession
 from pyspark.sql.types import IntegerType
 
@@ -43,7 +44,7 @@ def test_serialize_filesystem_factory(tmpdir):
         UnischemaField('foo', np.int32, (), ScalarCodec(IntegerType()), False),
     ])
 
-    class BogusFS(pyarrow.LocalFileSystem):
+    class BogusFS(LocalFileSystem):
         def __getstate__(self):
             raise RuntimeError("can not serialize")
 

@@ -36,7 +36,7 @@ from petastorm.unischema import Unischema, UnischemaField, dict_to_spark_row
 _DEFAULT_IMAGE_SIZE = (32, 16, 3)
 
 TestSchema = Unischema('TestSchema', [
-    UnischemaField('partition_key', np.unicode_, ()),
+    UnischemaField('partition_key', np.str_, ()),
     UnischemaField('id', np.int64, ()),
     UnischemaField('id2', np.int32, (), ScalarCodec(ShortType()), False),  # Explicit scalar codec in some scalar fields
     UnischemaField('id_float', np.float64, ()),
@@ -47,11 +47,11 @@ TestSchema = Unischema('TestSchema', [
     UnischemaField('decimal', Decimal, (), ScalarCodec(DecimalType(10, 9)), False),
     UnischemaField('matrix_uint16', np.uint16, _DEFAULT_IMAGE_SIZE, NdarrayCodec(), False),
     UnischemaField('matrix_uint32', np.uint32, _DEFAULT_IMAGE_SIZE, NdarrayCodec(), False),
-    UnischemaField('matrix_string', np.string_, (None, None,), NdarrayCodec(), False),
-    UnischemaField('empty_matrix_string', np.string_, (None,), NdarrayCodec(), False),
+    UnischemaField('matrix_string', np.bytes_, (None, None,), NdarrayCodec(), False),
+    UnischemaField('empty_matrix_string', np.str_, (None,), NdarrayCodec(), False),
     UnischemaField('matrix_nullable', np.uint16, _DEFAULT_IMAGE_SIZE, NdarrayCodec(), True),
-    UnischemaField('sensor_name', np.unicode_, (1,), NdarrayCodec(), False),
-    UnischemaField('string_array_nullable', np.unicode_, (None,), NdarrayCodec(), True),
+    UnischemaField('sensor_name', np.str_, (1,), NdarrayCodec(), False),
+    UnischemaField('string_array_nullable', np.str_, (None,), NdarrayCodec(), True),
     UnischemaField('integer_nullable', np.int32, (), nullable=True),
 ])
 
@@ -75,7 +75,7 @@ def _randomize_row(id_num):
         TestSchema.id2.name: np.int32(id_num % 2),
         TestSchema.id_float.name: np.float64(id_num),
         TestSchema.id_odd.name: np.bool_(id_num % 2),
-        TestSchema.partition_key.name: np.unicode_('p_{}'.format(int(id_num / 10))),
+        TestSchema.partition_key.name: np.str_('p_{}'.format(int(id_num / 10))),
         TestSchema.python_primitive_uint8.name: np.random.randint(0, 255, dtype=np.uint8),
         TestSchema.image_png.name: np.random.randint(0, 255, _DEFAULT_IMAGE_SIZE).astype(np.uint8),
         TestSchema.matrix.name: np.random.random(size=_DEFAULT_IMAGE_SIZE).astype(np.float32),
@@ -83,12 +83,12 @@ def _randomize_row(id_num):
         TestSchema.matrix_uint16.name: np.random.randint(0, 2 ** 16 - 1, _DEFAULT_IMAGE_SIZE).astype(np.uint16),
         TestSchema.matrix_uint32.name: np.random.randint(0, 2 ** 32 - 1, _DEFAULT_IMAGE_SIZE).astype(np.uint32),
         TestSchema.matrix_string.name: np.asarray(_random_binary_string_matrix(2, 3, 10)).astype(np.bytes_),
-        TestSchema.empty_matrix_string.name: np.asarray([], dtype=np.string_),
+        TestSchema.empty_matrix_string.name: np.asarray([], dtype=np.str_),
         TestSchema.matrix_nullable.name: None,
-        TestSchema.sensor_name.name: np.asarray(['test_sensor'], dtype=np.unicode_),
+        TestSchema.sensor_name.name: np.asarray(['test_sensor'], dtype=np.str_),
         TestSchema.string_array_nullable.name:
-            None if id_num % 5 == 0 else np.asarray([], dtype=np.unicode_)
-            if id_num % 4 == 0 else np.asarray([str(i + id_num) for i in range(2)], dtype=np.unicode_),
+            None if id_num % 5 == 0 else np.asarray([], dtype=np.str_)
+            if id_num % 4 == 0 else np.asarray([str(i + id_num) for i in range(2)], dtype=np.str_),
         TestSchema.integer_nullable.name: None if id_num % 2 else np.int32(id_num),
     }
     return row_dict
@@ -192,8 +192,8 @@ def create_test_scalar_dataset(output_url, num_rows, num_files=4, spark=None, pa
             'id_div_700': np.int32(i // 700),
             'datetime': np.datetime64('2019-01-02'),
             'timestamp': np.datetime64('2005-02-25T03:30'),
-            'string': np.unicode_('hello_{}'.format(i)),
-            'string2': np.unicode_('world_{}'.format(i)),
+            'string': np.str_('hello_{}'.format(i)),
+            'string2': np.str_('world_{}'.format(i)),
             'float64': np.float64(i) * .66,
             'int_fixed_size_list': np.arange(1 + i, 10 + i).astype(np.int32)
         }

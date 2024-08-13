@@ -127,8 +127,7 @@ def test_asymetric_parquet_pieces(reader_factory, tmpdir):
 
     # We verify we have pieces with different number of row-groups
     dataset = pq.ParquetDataset(tmpdir.strpath)
-    row_group_counts = set(piece.get_metadata().num_row_groups for piece in dataset.pieces)
-    assert len(row_group_counts) > 1
+    assert len(dataset.fragments) > 1
 
     # Make sure we are not missing any rows.
     with reader_factory(url, schema_fields=['id']) as reader:

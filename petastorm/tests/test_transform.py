@@ -19,7 +19,7 @@ from petastorm.transform import edit_field, transform_schema, TransformSpec
 from petastorm.unischema import Unischema, UnischemaField
 
 TestSchema = Unischema('TestSchema', [
-    UnischemaField('string', np.unicode_, (), None, False),
+    UnischemaField('string', np.str_, (), None, False),
     UnischemaField('int', np.int32, (), None, False),
     UnischemaField('double', np.float64, (), None, False),
 ])

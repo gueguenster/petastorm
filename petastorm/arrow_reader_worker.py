@@ -20,11 +20,12 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 from pyarrow import parquet as pq
-from pyarrow.parquet import ParquetFile
 
 from petastorm.cache import NullCache
+from petastorm.etl.dataset_metadata import RowGroupIndices
 from petastorm.workers_pool import EmptyResultError
 from petastorm.workers_pool.worker_base import WorkerBase
+from pyarrow.dataset import ParquetFileFragment, get_partition_keys
 
 
 class ArrowReaderWorkerResultsQueueReader(object):
@@ -62,7 +63,7 @@ class ArrowReaderWorkerResultsQueueReader(object):
                     column_as_numpy = column_as_pandas
 
                 if pa.types.is_string(column.type):
-                    result_dict[column_name] = column_as_numpy.astype(np.unicode_)
+                    result_dict[column_name] = column_as_numpy.astype(np.str_)
                 elif pa.types.is_list(column.type):
                     # Assuming all lists are of the same length, hence we can collate them into a matrix
                     list_of_lists = column_as_numpy
@@ -132,12 +133,12 @@ class ArrowReaderWorker(WorkerBase):
             self._dataset = pq.ParquetDataset(
                 self._dataset_path_or_paths,
                 filesystem=self._filesystem,
-                validate_schema=False, filters=self._arrow_filters)
+                filters=self._arrow_filters)
 
-        piece = self._split_pieces[piece_index]
+        piece: RowGroupIndices = self._split_pieces[piece_index]
 
         # Create pyarrow file system
-        parquet_file = ParquetFile(self._dataset.fs.open(piece.path))
+        parquet_file = self._dataset.fragments[piece.fragment_index]
 
         if not isinstance(self._local_cache, NullCache):
             if worker_predicate:
@@ -159,7 +160,7 @@ class ArrowReaderWorker(WorkerBase):
             else:
                 path_str = self._dataset_path_or_paths
             cache_key = '{}:{}:{}'.format(hashlib.md5(path_str.encode('utf-8')).hexdigest(),
-                                          piece.path, piece_index)
+                                          piece.fragment_path, piece_index)
             all_cols = self._local_cache.get(cache_key,
                                              lambda: self._load_rows(parquet_file, piece, shuffle_row_drop_partition))
 
@@ -285,10 +286,20 @@ class ArrowReaderWorker(WorkerBase):
         return pa.Table.from_pandas(result, preserve_index=False)
 
     def _read_with_shuffle_row_drop(self, piece, pq_file, column_names, shuffle_row_drop_partition):
-        partition_names = self._dataset.partitions.partition_names if self._dataset.partitions else set()
 
         # pyarrow would fail if we request a column names that the dataset is partitioned by
-        table = piece.read(columns=column_names - partition_names, partitions=self._dataset.partitions)
+        if not self._ngram:
+            # If ngram we have to read the full fragment because we want to access sub-sequences
+            # if not ngram, we can access the adequate row group
+            pq_file = pq_file.subset(row_group_ids=[piece.row_group_id])
+
+        partition_dict = get_partition_keys(pq_file.partition_expression)
+        partition_columns = set(partition_dict.keys())
+        non_partitioned_columns = list(column_names - partition_columns)
+
+        table = pq_file.to_table(columns=non_partitioned_columns,
+                                 filter=self._dataset._filter_expression)
+
         if self._shuffle_rows:
             indices = self._random_state.permutation(table.num_rows)
             table = table.take(indices)
@@ -308,9 +319,18 @@ class ArrowReaderWorker(WorkerBase):
 
         if num_partitions > 1:
             data_frame_pandas = table.to_pandas()
-            partition_indexes = np.floor(np.arange(num_rows) / (float(num_rows) / min(num_rows, num_partitions)))
+            if num_rows > 0:
+                partition_indexes = np.floor(np.arange(num_rows) / (float(num_rows) / min(num_rows, num_partitions)))
+            else:
+                partition_indexes = np.floor(np.arange(num_rows))
 
             table = pa.Table.from_pandas(data_frame_pandas.loc[partition_indexes == this_partition],
                                          preserve_index=False)
+
+        if partition_columns:
+            data_frame_pandas = table.to_pandas()
+            for partition_key, partition_value in partition_dict.items():
+                data_frame_pandas[partition_key] = partition_value
+            table = pa.Table.from_pandas(data_frame_pandas)
 
         return table

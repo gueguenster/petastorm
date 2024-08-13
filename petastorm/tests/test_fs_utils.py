@@ -14,7 +14,7 @@
 import unittest
 
 import dill
-from pyarrow.filesystem import LocalFileSystem
+from pyarrow.fs import LocalFileSystem
 from pyarrow.lib import ArrowIOError
 from six.moves.urllib.parse import urlparse
 import gcsfs

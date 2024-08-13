@@ -65,8 +65,7 @@ def generate_petastorm_metadata(spark, dataset_url, unischema_class=None, use_su
     fs = resolver.filesystem()
     dataset = pq.ParquetDataset(
         resolver.get_dataset_path(),
-        filesystem=fs,
-        validate_schema=False)
+        filesystem=fs)
 
     if unischema_class:
         schema = locate(unischema_class)
@@ -83,7 +82,7 @@ def generate_petastorm_metadata(spark, dataset_url, unischema_class=None, use_su
 
     # In order to be backwards compatible, we retrieve the common metadata from the dataset before
     # overwriting the metadata to keep row group indexes and the old row group per file index
-    arrow_metadata = dataset.common_metadata or None
+    arrow_metadata = dataset.schema.metadata or None
 
     with materialize_dataset(spark, dataset_url, schema, use_summary_metadata=use_summary_metadata,
                              filesystem_factory=resolver.filesystem_factory()):
@@ -146,7 +145,7 @@ def _main(args):
 
     spark = spark_session.getOrCreate()
 
-    generate_petastorm_metadata(spark, args.dataset_url, args.unischema_class, args.use_summary_metadata,
+    generate_petastorm_metadata(spark, args.dataset_url, args.unischema_class, False,
                                 hdfs_driver=args.hdfs_driver)
 
     # Shut down the spark sessions and context

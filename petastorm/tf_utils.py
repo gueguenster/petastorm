@@ -34,8 +34,8 @@ _NUMPY_TO_TF_DTYPES_MAPPING = {
     np.uint32: tf.int64,
     np.float32: tf.float32,
     np.float64: tf.float64,
-    np.string_: tf.string,
-    np.unicode_: tf.string,
+    np.str_: tf.string,
+    np.str_: tf.string,
     np.str_: tf.string,
     np.bool_: tf.bool,
     Decimal: tf.string,
@@ -84,7 +84,7 @@ def _sanitize_field_tf_types(sample):
             next_sample_dict[k] = v.astype(np.int32)
         elif isinstance(v, np.ndarray) and v.dtype == np.uint32:
             next_sample_dict[k] = v.astype(np.int64)
-        elif isinstance(v, np.ndarray) and v.dtype.type in (np.bytes_, np.unicode_):
+        elif isinstance(v, np.ndarray) and v.dtype.type in (np.bytes_, np.str_):
             if v.size != 0:
                 next_sample_dict[k] = v.tolist()
         elif isinstance(v, np.ndarray) and v.dtype.kind == 'O' and isinstance(v[0], datetime.date):
@@ -129,7 +129,7 @@ def _numpy_to_tf_dtypes(numpy_dtype):
     :return: tensorflow dtype object
     """
     if numpy_dtype in _NUMPY_TO_TF_DTYPES_MAPPING:
-        if numpy_dtype == np.unicode_ and sys.version_info >= (3, 0):
+        if numpy_dtype == np.str_ and sys.version_info >= (3, 0):
             warnings.warn("Tensorflow will convert all unicode strings back to bytes type. "
                           "You may need to decode values.", UnicodeWarning)
         return _NUMPY_TO_TF_DTYPES_MAPPING[numpy_dtype]
@@ -287,7 +287,7 @@ def tf_tensors(reader, shuffling_queue_capacity=0, min_after_dequeue=0):
 
     An optional shuffling queue is created if shuffling_queue_capacity is greater than 0.
 
-    Note that if reading a unischema field that is unicode (``np.unicode_`` or ``np.str_``) tensorflow will
+    Note that if reading a unischema field that is unicode (``np.str_`` or ``np.str_``) tensorflow will
     represent it as a tf.string which will be an array of bytes. If using python3 you may need to decode
     it to convert it back to a python str type.
 
