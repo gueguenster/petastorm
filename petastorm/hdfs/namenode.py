@@ -267,7 +267,8 @@ class HdfsConnector(object):
             # Support for libhdfs3 was removed in v0.17.0, we include it here for backwards
             # compatibility
             kwargs['driver'] = driver
-        return pyarrow.hdfs.connect(hostname, url.port or 8020, **kwargs)
+        hdfs = pyarrow.fs.HadoopFileSystem(host=hostname, port=url.port or 8020, **kwargs)
+        return hdfs
 
     @classmethod
     def connect_to_either_namenode(cls, list_of_namenodes, user=None):

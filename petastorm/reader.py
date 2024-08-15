@@ -15,10 +15,11 @@
 import collections.abc
 import logging
 import warnings
-from typing import List
+from typing import List, Tuple
 
 import six
 from pyarrow import parquet as pq
+from pyarrow.dataset import ParquetFileFragment, get_partition_keys
 
 from petastorm.arrow_reader_worker import ArrowReaderWorker
 from petastorm.cache import NullCache
@@ -548,7 +549,8 @@ class Reader(object):
             self._apply_predicate_to_row_groups(dataset, row_groups, predicate)
 
         if rowgroup_selector:
-            raise Exception("RowGroupSelector is not supported.")
+            raise Exception("rowgroup_selector is not supported in this version.")
+            # TODO: re-enable support
             # filtered_row_group_indexes = self._apply_row_group_selector(dataset, rowgroup_selector,
             #                                                             filtered_row_group_indexes)
 
@@ -591,63 +593,52 @@ class Reader(object):
         filtered_row_group_indexes = [index for index in filtered_row_group_indexes if index % shard_count == cur_shard]
         return filtered_row_group_indexes
 
-    # def _apply_row_group_selector(self, dataset, rowgroup_selector, filtered_row_group_indexes):
-    #     """Filters the list of row group indexes using rowgroup selector object. Returns a modified list of rowgroup
-    #     indexes."""
-    #
-    #     if not isinstance(rowgroup_selector, RowGroupSelectorBase):
-    #         raise ValueError('rowgroup_selector parameter is expected to be derived from RowGroupSelectorBase')
-    #
-    #     # # Load indexes from metadata
-    #     # available_row_group_indexes = rowgroup_indexing.get_row_group_indexes(dataset)
-    #     #
-    #     # required_indexes = rowgroup_selector.get_index_names()
-    #     # if not set(required_indexes).issubset(set(available_row_group_indexes.keys())):
-    #     #     raise ValueError('Some of required indexes {} are not available in {}'.format(
-    #     #         required_indexes, list(available_row_group_indexes.keys())))
-    #     #
-    #     # selected_indexes = rowgroup_selector.select_row_groups(available_row_group_indexes)
-    #     #
-    #     # # include only selected_indexes but in filtered_row_group_indexes order
-    #     # filtered_row_group_indexes = [idx for idx in filtered_row_group_indexes if idx in selected_indexes]
-    #     # return filtered_row_group_indexes
-    #     return filtered_row_group_indexes
+    def _apply_row_group_selector(self, dataset, rowgroup_selector, filtered_row_group_indexes):
+        """Filters the list of row group indexes using rowgroup selector object. Returns a modified list of rowgroup
+        indexes."""
 
-    def _apply_predicate_to_row_groups(self, dataset, row_groups, predicate):
+        if not isinstance(rowgroup_selector, RowGroupSelectorBase):
+            raise ValueError('rowgroup_selector parameter is expected to be derived from RowGroupSelectorBase')
+
+        # Load indexes from metadata
+        available_row_group_indexes = rowgroup_indexing.get_row_group_indexes(dataset)
+
+        required_indexes = rowgroup_selector.get_index_names()
+        if not set(required_indexes).issubset(set(available_row_group_indexes.keys())):
+            raise ValueError('Some of required indexes {} are not available in {}'.format(
+                required_indexes, list(available_row_group_indexes.keys())))
+
+        selected_indexes = rowgroup_selector.select_row_groups(available_row_group_indexes)
+
+        # include only selected_indexes but in filtered_row_group_indexes order
+        filtered_row_group_indexes = [idx for idx in filtered_row_group_indexes if idx in selected_indexes]
+        return filtered_row_group_indexes
+
+    def _apply_predicate_to_row_groups(self, dataset: pq.ParquetDataset, row_groups: List[RowGroupIndices], predicate: PredicateBase) -> Tuple[List[int], PredicateBase]:
         """Filters the list of row group indexes using rowgroup selector object. Returns a modified list of rowgroup
         indexes and a list of worker_predicate: predicates that could not be applied at this level
         (parquet partitioning)."""
 
-        # if predicate:
-        #     if not isinstance(predicate, PredicateBase):
-        #         raise ValueError('predicate parameter is expected to be derived from PredicateBase')
-        #     predicate_fields = predicate.get_fields()
-        #     partition_fields = set([field.name for field in dataset.partitioning.schema])
-        #
-        #     #partition_names = dataset.partitions.partition_names if dataset.partitions else set()
-        #     if len(set(predicate_fields) == partition_names:
-        #         assert len(partition_names) == 1, \
-        #             'Datasets with only a single partition level supported at the moment'
-        #
-        #         filtered_row_group_indexes = []
-        #         for piece_index, piece in enumerate(row_groups):
-        #             partition_name, partition_index = piece.partition_keys[0]
-        #             partition_value = dataset.partitions[0].keys[partition_index]
-        #
-        #             # Convert partition value to correct type per the schema
-        #             partition_value = self.schema.fields[partition_name].numpy_dtype(partition_value)
-        #             if predicate.do_include({partition_name: partition_value}):
-        #                 filtered_row_group_indexes.append(piece_index)
-        #         worker_predicate = None
-        #     else:
-        #         filtered_row_group_indexes = list(range(len(row_groups)))
-        #         worker_predicate = predicate
-        #
-        # else:
-        #     filtered_row_group_indexes = list(range(len(row_groups)))
-        #     worker_predicate = None
-        filtered_row_group_indexes = list(range(len(row_groups)))
-        return filtered_row_group_indexes, predicate
+        if predicate:
+            if not isinstance(predicate, PredicateBase):
+                raise ValueError('predicate parameter is expected to be derived from PredicateBase')
+            predicate_fields = set(predicate.get_fields())
+            partition_names = set(get_partition_keys(dataset.fragments[0].partition_expression).keys())
+            if predicate_fields == partition_names:
+                filtered_row_group_indexes = []
+                for rg_index, rg in enumerate(row_groups):
+                    partition_dict = get_partition_keys(dataset.fragments[rg.fragment_index].partition_expression)
+                    np_partition_dict = {k: self.schema.fields[k].numpy_dtype(v) for k, v in partition_dict.items()}
+                    if predicate.do_include(np_partition_dict):
+                        filtered_row_group_indexes.append(rg_index)
+                worker_predicate = None
+            else:
+                filtered_row_group_indexes = list(range(len(row_groups)))
+                worker_predicate = predicate
+        else:
+            filtered_row_group_indexes = list(range(len(row_groups)))
+            worker_predicate = None
+        return filtered_row_group_indexes, worker_predicate
 
     @staticmethod
     def _normalize_shuffle_options(shuffle_row_drop_partitions: int, filtered_row_group_indexes: List[int], row_groups: list[RowGroupIndices]):

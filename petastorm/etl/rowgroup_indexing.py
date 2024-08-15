@@ -24,6 +24,7 @@ from petastorm import utils
 from petastorm.etl import dataset_metadata
 from petastorm.etl.legacy import depickle_legacy_package_name_compatible
 from petastorm.fs_utils import FilesystemResolver
+from petastorm.utils import common_metadata_path, path_exists, get_dataset_metadata_dict
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ def _index_columns(piece_info, dataset_url, partitions, indexers, schema, hdfs_d
     for indexer in indexers:
         indexer.build_index(decoded_rows, piece_info.piece_index)
 
-    # Indexer objects contain index data, it will be consolidated on reduce phace
+    # Indexer objects contain index data, it will be consolidated on reduce phase
     return indexers
 
 
@@ -138,13 +139,11 @@ def get_row_group_indexes(dataset):
     :param dataset: dataset object
     :return: dataset indexes as dictionary
     """
-    if not dataset.common_metadata:
-        raise ValueError('Could not find _metadata file. add_dataset_metadata(..) in'
-                         ' petastorm.etl.dataset_metadata.py should be used to'
-                         ' generate this file in your ETL code.'
-                         ' You can generate it on an existing dataset using rowgroup_indexing_run.py')
-
-    dataset_metadata_dict = dataset.common_metadata.metadata
+    path = common_metadata_path(dataset, '_common_metadata')
+    if path_exists(dataset.filesystem, path):
+        dataset_metadata_dict = dataset_metadata.get_dataset_metadata_dict(path, dataset.filesystem)
+    else:
+        dataset_metadata_dict = {}
 
     # Load rowgroups_index
     if ROWGROUPS_INDEX_KEY not in dataset_metadata_dict:
