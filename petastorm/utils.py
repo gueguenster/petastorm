@@ -20,8 +20,9 @@ from multiprocessing import Pool
 import numpy as np
 import pyarrow
 from future.utils import raise_with_traceback
-from pyarrow.fs import LocalFileSystem, FileType
 from pyarrow.parquet import ParquetDataset, ParquetFile
+
+from petastorm.fs_utils import path_exists
 
 logger = logging.getLogger(__name__)
 
@@ -84,11 +85,6 @@ def decode_row(row, schema):
                 raise_with_traceback(DecodeFieldError('Decoding field "{}" failed'.format(field_name)))
 
     return decoded_row
-
-
-def path_exists(fs, path):
-    file_info = fs.get_file_info(path)
-    return not file_info.type == FileType.NotFound
 
 
 def common_metadata_path(dataset: ParquetDataset, suffix: str = "_common_metadata") -> str:

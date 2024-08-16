@@ -43,7 +43,6 @@ def _sanitize_pytorch_types(row_as_dict):
 
     The parameter is modified in-place.
 
-    int8, uint16 are promoted to int32; uint32 -> int64;
     numpy string_, unicode_, object arrays are not supported.
 
     :param dict[str,obj] row_as_dict: a dictionary of key-value pairs. The values types are promoted to
@@ -55,10 +54,6 @@ def _sanitize_pytorch_types(row_as_dict):
         if isinstance(value, np.ndarray):
             if value.dtype == np.int8 and _TORCH_BEFORE_1_1:
                 row_as_dict[name] = value.astype(np.int16)
-            elif value.dtype == np.uint16:
-                row_as_dict[name] = value.astype(np.int32)
-            elif value.dtype == np.uint32:
-                row_as_dict[name] = value.astype(np.int64)
             elif value.dtype == np.bool_:
                 row_as_dict[name] = value.astype(np.uint8)
             elif re.search('[SaUO]', value.dtype.str):

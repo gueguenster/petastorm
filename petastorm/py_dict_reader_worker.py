@@ -307,7 +307,8 @@ class PyDictReaderWorker(WorkerBase):
 
         # Add back partition data, which is constant for this data fragment
         for partition_key, partition_value in partition_dict.items():
-            selected_dataframe[partition_key] = partition_value
+            if column_names is not None and partition_key in column_names:
+                selected_dataframe[partition_key] = partition_value
 
         return selected_dataframe.to_dict('records')
 

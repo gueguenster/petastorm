@@ -23,8 +23,8 @@ from six.moves import range
 from petastorm import utils
 from petastorm.etl import dataset_metadata
 from petastorm.etl.legacy import depickle_legacy_package_name_compatible
-from petastorm.fs_utils import FilesystemResolver
-from petastorm.utils import common_metadata_path, path_exists, get_dataset_metadata_dict
+from petastorm.fs_utils import FilesystemResolver, path_exists
+from petastorm.utils import common_metadata_path, get_dataset_metadata_dict
 
 logger = logging.getLogger(__name__)
 

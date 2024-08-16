@@ -330,7 +330,8 @@ class ArrowReaderWorker(WorkerBase):
         if partition_columns:
             data_frame_pandas = table.to_pandas()
             for partition_key, partition_value in partition_dict.items():
-                data_frame_pandas[partition_key] = partition_value
+                if column_names is not None and partition_key in column_names:
+                    data_frame_pandas[partition_key] = partition_value
             table = pa.Table.from_pandas(data_frame_pandas)
 
         return table

@@ -16,6 +16,7 @@ import logging
 import fsspec
 import pyarrow
 import six
+from pyarrow._fs import FileType
 from six.moves.urllib.parse import urlparse, urlunparse
 from fsspec.core import strip_protocol
 from fsspec.utils import update_storage_options
@@ -216,3 +217,23 @@ def normalize_dir_url(dataset_url):
     dataset_url = dataset_url[:-1] if dataset_url[-1] == '/' else dataset_url
     logger.debug('directory url: %s', dataset_url)
     return dataset_url
+
+
+def path_exists(fs: pyarrow.fs.FileSystem, path: str):
+    """
+    Checks if the given path exists.
+    """
+    file_info = fs.get_file_info(path)
+    return not file_info.type == FileType.NotFound
+
+def delete_path(fs: pyarrow.fs.FileSystem, path: str):
+    """
+    Delete a file or a directory.
+    """
+    file_info = fs.get_file_info(path)
+    if file_info.type == FileType.File:
+        fs.delete_file(path)
+    elif file_info.type == FileType.Directory:
+        fs.delete_dir(path)
+    else:
+        raise ValueError('Path does not exist')

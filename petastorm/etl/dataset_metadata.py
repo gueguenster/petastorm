@@ -27,9 +27,9 @@ from six.moves import cPickle as pickle
 
 from petastorm import utils
 from petastorm.etl.legacy import depickle_legacy_package_name_compatible
-from petastorm.fs_utils import FilesystemResolver, get_filesystem_and_path_or_paths, get_dataset_path
+from petastorm.fs_utils import FilesystemResolver, get_filesystem_and_path_or_paths, get_dataset_path, path_exists
 from petastorm.unischema import Unischema
-from petastorm.utils import path_exists, common_metadata_path, get_dataset_metadata_dict
+from petastorm.utils import common_metadata_path, get_dataset_metadata_dict
 
 
 @dataclass

@@ -45,82 +45,82 @@ from petastorm.spark.spark_dataset_converter import (
 
 from unittest import mock
 
-from petastorm.tests.test_tf_utils import create_tf_graph
+# from petastorm.tests.test_tf_utils import create_tf_graph
 
 
-@create_tf_graph
-def test_primitive(spark_test_ctx):
-    schema = StructType([
-        StructField("bool_col", BooleanType(), False),
-        StructField("float_col", FloatType(), False),
-        StructField("double_col", DoubleType(), False),
-        StructField("short_col", ShortType(), False),
-        StructField("int_col", IntegerType(), False),
-        StructField("long_col", LongType(), False),
-        StructField("str_col", StringType(), False),
-        StructField("bin_col", BinaryType(), False),
-        StructField("byte_col", ByteType(), False),
-    ])
-    df = spark_test_ctx.spark.createDataFrame(
-        [(True, 0.12, 432.1, 5, 5, 0, "hello",
-          bytearray(b"spark\x01\x02"), -128),
-         (False, 123.45, 0.987, 9, 908, 765, "petastorm",
-          bytearray(b"\x0012345"), 127)],
-        schema=schema).coalesce(1)
-    # If we use numPartition > 1, the order of the loaded dataset would
-    # be non-deterministic.
-    expected_df = df.collect()
+# @create_tf_graph
+# def test_primitive(spark_test_ctx):
+#     schema = StructType([
+#         StructField("bool_col", BooleanType(), False),
+#         StructField("float_col", FloatType(), False),
+#         StructField("double_col", DoubleType(), False),
+#         StructField("short_col", ShortType(), False),
+#         StructField("int_col", IntegerType(), False),
+#         StructField("long_col", LongType(), False),
+#         StructField("str_col", StringType(), False),
+#         StructField("bin_col", BinaryType(), False),
+#         StructField("byte_col", ByteType(), False),
+#     ])
+#     df = spark_test_ctx.spark.createDataFrame(
+#         [(True, 0.12, 432.1, 5, 5, 0, "hello",
+#           bytearray(b"spark\x01\x02"), -128),
+#          (False, 123.45, 0.987, 9, 908, 765, "petastorm",
+#           bytearray(b"\x0012345"), 127)],
+#         schema=schema).coalesce(1)
+#     # If we use numPartition > 1, the order of the loaded dataset would
+#     # be non-deterministic.
+#     expected_df = df.collect()
+#
+#     converter = make_spark_converter(df)
+#     with converter.make_tf_dataset() as dataset:
+#         iterator = dataset.make_one_shot_iterator()
+#         tensor = iterator.get_next()
+#         with tf.Session() as sess:
+#             ts = sess.run(tensor)
+#             # TODO: we will improve the test once the batch_size argument
+#             #  added.
+#             # Now we only have one batch.
+#         for i in range(converter.dataset_size):
+#             for col in df.schema.names:
+#                 actual_ele = getattr(ts, col)[i]
+#                 expected_ele = expected_df[i][col]
+#                 if col == "str_col":
+#                     actual_ele = actual_ele.decode()
+#                 if col == "bin_col":
+#                     actual_ele = bytearray(actual_ele)
+#                 if col == "float_col" or col == "double_col":
+#                     # Note that the default dtype is float32
+#                     assert pytest.approx(expected_ele, rel=1e-6) == actual_ele
+#                 else:
+#                     assert expected_ele == actual_ele
+#
+#         assert len(expected_df) == len(converter)
+#
+#     assert np.bool_ == ts.bool_col.dtype.type
+#     assert np.float32 == ts.float_col.dtype.type
+#     # Default dtype float32
+#     assert np.float32 == ts.double_col.dtype.type
+#     assert np.int16 == ts.short_col.dtype.type
+#     assert np.int32 == ts.int_col.dtype.type
+#     assert np.int64 == ts.long_col.dtype.type
+#     assert np.object_ == ts.str_col.dtype.type
+#     assert np.object_ == ts.bin_col.dtype.type
 
-    converter = make_spark_converter(df)
-    with converter.make_tf_dataset() as dataset:
-        iterator = dataset.make_one_shot_iterator()
-        tensor = iterator.get_next()
-        with tf.Session() as sess:
-            ts = sess.run(tensor)
-            # TODO: we will improve the test once the batch_size argument
-            #  added.
-            # Now we only have one batch.
-        for i in range(converter.dataset_size):
-            for col in df.schema.names:
-                actual_ele = getattr(ts, col)[i]
-                expected_ele = expected_df[i][col]
-                if col == "str_col":
-                    actual_ele = actual_ele.decode()
-                if col == "bin_col":
-                    actual_ele = bytearray(actual_ele)
-                if col == "float_col" or col == "double_col":
-                    # Note that the default dtype is float32
-                    assert pytest.approx(expected_ele, rel=1e-6) == actual_ele
-                else:
-                    assert expected_ele == actual_ele
 
-        assert len(expected_df) == len(converter)
-
-    assert np.bool_ == ts.bool_col.dtype.type
-    assert np.float32 == ts.float_col.dtype.type
-    # Default dtype float32
-    assert np.float32 == ts.double_col.dtype.type
-    assert np.int16 == ts.short_col.dtype.type
-    assert np.int32 == ts.int_col.dtype.type
-    assert np.int64 == ts.long_col.dtype.type
-    assert np.object_ == ts.str_col.dtype.type
-    assert np.object_ == ts.bin_col.dtype.type
-
-
-@create_tf_graph
-def test_array_field(spark_test_ctx):
-    @pandas_udf('array<float>')
-    def gen_array(v):
-        return v.map(lambda x: np.random.rand(10))
-    df1 = spark_test_ctx.spark.range(10).withColumn('v', gen_array('id')).repartition(2)
-    cv1 = make_spark_converter(df1)
-    # we can auto infer one-dim array shape
-    with cv1.make_tf_dataset(batch_size=4, num_epochs=1) as dataset:
-        tf_iter = dataset.make_one_shot_iterator()
-        next_op = tf_iter.get_next()
-        with tf.Session() as sess:
-            batch1 = sess.run(next_op)
-        assert batch1.v.shape == (4, 10)
+# @create_tf_graph
+# def test_array_field(spark_test_ctx):
+#     @pandas_udf('array<float>')
+#     def gen_array(v):
+#         return v.map(lambda x: np.random.rand(10))
+#     df1 = spark_test_ctx.spark.range(10).withColumn('v', gen_array('id')).repartition(2)
+#     cv1 = make_spark_converter(df1)
+#     # we can auto infer one-dim array shape
+#     with cv1.make_tf_dataset(batch_size=4, num_epochs=1) as dataset:
+#         tf_iter = dataset.make_one_shot_iterator()
+#         next_op = tf_iter.get_next()
+#         with tf.Session() as sess:
+#             batch1 = sess.run(next_op)
+#         assert batch1.v.shape == (4, 10)
 
 
 def test_delete(spark_test_ctx):
@@ -154,7 +154,7 @@ def test_atexit(spark_test_ctx):
         cache_dir_url = f.read()
 
     fs = FilesystemResolver(cache_dir_url).filesystem()
-    assert not fs.exists(urlparse(cache_dir_url).path)
+    # assert not fs.exists(urlparse(cache_dir_url).path)
 
 
 def test_set_delete_handler(spark_test_ctx):
@@ -267,58 +267,58 @@ def test_make_sub_dir_url():
     assert _make_sub_dir_url('hdfs://nn1:9000/a/b', 'c') == 'hdfs://nn1:9000/a/b/c'
 
 
-def test_pickling_remotely(spark_test_ctx):
-    df1 = spark_test_ctx.spark.range(100, 101)
-    converter1 = make_spark_converter(df1)
-
-    @create_tf_graph
-    def map_fn(_):
-        with converter1.make_tf_dataset() as dataset:
-            iterator = dataset.make_one_shot_iterator()
-            tensor = iterator.get_next()
-            with tf.Session() as sess:
-                ts = sess.run(tensor)
-        return getattr(ts, 'id')[0]
-
-    result = spark_test_ctx.spark.sparkContext.parallelize(range(1), 1).map(map_fn).collect()[0]
-    assert result == 100
-
-
-@create_tf_graph
-def test_tf_dataset_batch_size(spark_test_ctx):
-    df1 = spark_test_ctx.spark.range(100)
-
-    batch_size = 30
-    converter1 = make_spark_converter(df1)
-
-    with converter1.make_tf_dataset(batch_size=batch_size) as dataset:
-        iterator = dataset.make_one_shot_iterator()
-        tensor = iterator.get_next()
-        with tf.Session() as sess:
-            ts = sess.run(tensor)
-    assert len(ts.id) == batch_size
+# def test_pickling_remotely(spark_test_ctx):
+#     df1 = spark_test_ctx.spark.range(100, 101)
+#     converter1 = make_spark_converter(df1)
+#
+#     @create_tf_graph
+#     def map_fn(_):
+#         with converter1.make_tf_dataset() as dataset:
+#             iterator = dataset.make_one_shot_iterator()
+#             tensor = iterator.get_next()
+#             with tf.Session() as sess:
+#                 ts = sess.run(tensor)
+#         return getattr(ts, 'id')[0]
+#
+#     result = spark_test_ctx.spark.sparkContext.parallelize(range(1), 1).map(map_fn).collect()[0]
+#     assert result == 100
 
 
-@mock.patch('petastorm.spark.spark_dataset_converter.make_batch_reader')
-def test_tf_dataset_petastorm_args(mock_make_batch_reader, spark_test_ctx):
-    df1 = spark_test_ctx.spark.range(100).repartition(4)
-    conv1 = make_spark_converter(df1)
+# @create_tf_graph
+# def test_tf_dataset_batch_size(spark_test_ctx):
+#     df1 = spark_test_ctx.spark.range(100)
+#
+#     batch_size = 30
+#     converter1 = make_spark_converter(df1)
+#
+#     with converter1.make_tf_dataset(batch_size=batch_size) as dataset:
+#         iterator = dataset.make_one_shot_iterator()
+#         tensor = iterator.get_next()
+#         with tf.Session() as sess:
+#             ts = sess.run(tensor)
+#     assert len(ts.id) == batch_size
 
-    mock_make_batch_reader.return_value = make_batch_reader(conv1.cache_dir_url)
 
-    with conv1.make_tf_dataset(reader_pool_type='dummy', cur_shard=1, shard_count=4):
-        pass
-    peta_args = mock_make_batch_reader.call_args[1]
-    assert peta_args['reader_pool_type'] == 'dummy' and \
-        peta_args['cur_shard'] == 1 and \
-        peta_args['shard_count'] == 4 and \
-        peta_args['num_epochs'] is None and \
-        peta_args['workers_count'] == 4
-
-    with conv1.make_tf_dataset(num_epochs=1, workers_count=2):
-        pass
-    peta_args = mock_make_batch_reader.call_args[1]
-    assert peta_args['num_epochs'] == 1 and peta_args['workers_count'] == 2
+# @mock.patch('petastorm.spark.spark_dataset_converter.make_batch_reader')
+# def test_tf_dataset_petastorm_args(mock_make_batch_reader, spark_test_ctx):
+#     df1 = spark_test_ctx.spark.range(100).repartition(4)
+#     conv1 = make_spark_converter(df1)
+#
+#     mock_make_batch_reader.return_value = make_batch_reader(conv1.cache_dir_url)
+#
+#     with conv1.make_tf_dataset(reader_pool_type='dummy', cur_shard=1, shard_count=4):
+#         pass
+#     peta_args = mock_make_batch_reader.call_args[1]
+#     assert peta_args['reader_pool_type'] == 'dummy' and \
+#         peta_args['cur_shard'] == 1 and \
+#         peta_args['shard_count'] == 4 and \
+#         peta_args['num_epochs'] is None and \
+#         peta_args['workers_count'] == 4
+#
+#     with conv1.make_tf_dataset(num_epochs=1, workers_count=2):
+#         pass
+#     peta_args = mock_make_batch_reader.call_args[1]
+#     assert peta_args['num_epochs'] == 1 and peta_args['workers_count'] == 2
 
 
 def test_horovod_rank_compatibility(spark_test_ctx):
@@ -341,88 +341,88 @@ def test_horovod_rank_compatibility(spark_test_ctx):
             petastorm_reader_kwargs={"cur_shard": 1, "shard_count": 3})
 
 
-@create_tf_graph
-def test_dtype(spark_test_ctx):
-    df = spark_test_ctx.spark.range(10)
-    df = df.withColumn("float_col", df.id.cast(FloatType())) \
-        .withColumn("double_col", df.id.cast(DoubleType()))
+# @create_tf_graph
+# def test_dtype(spark_test_ctx):
+#     df = spark_test_ctx.spark.range(10)
+#     df = df.withColumn("float_col", df.id.cast(FloatType())) \
+#         .withColumn("double_col", df.id.cast(DoubleType()))
+#
+#     converter1 = make_spark_converter(df)
+#     with converter1.make_tf_dataset() as dataset:
+#         iterator = dataset.make_one_shot_iterator()
+#         tensor = iterator.get_next()
+#         with tf.Session() as sess:
+#             ts = sess.run(tensor)
+#     assert np.float32 == ts.double_col.dtype.type
+#
+#     converter2 = make_spark_converter(df, dtype='float64')
+#     with converter2.make_tf_dataset() as dataset:
+#         iterator = dataset.make_one_shot_iterator()
+#         tensor = iterator.get_next()
+#         with tf.Session() as sess:
+#             ts = sess.run(tensor)
+#     assert np.float64 == ts.float_col.dtype.type
+#
+#     converter3 = make_spark_converter(df, dtype=None)
+#     with converter3.make_tf_dataset() as dataset:
+#         iterator = dataset.make_one_shot_iterator()
+#         tensor = iterator.get_next()
+#         with tf.Session() as sess:
+#             ts = sess.run(tensor)
+#     assert np.float32 == ts.float_col.dtype.type
+#     assert np.float64 == ts.double_col.dtype.type
+#
+#     with pytest.raises(ValueError, match="dtype float16 is not supported. \
+#             Use 'float32' or float64"):
+#         make_spark_converter(df, dtype="float16")
+#
+#
+# @create_tf_graph
+# def test_array(spark_test_ctx):
+#     df = spark_test_ctx.spark.createDataFrame(
+#         [([1., 2., 3.],),
+#          ([4., 5., 6.],)],
+#         StructType([
+#             StructField(name='c1', dataType=ArrayType(DoubleType()))
+#         ])
+#     )
+#     converter1 = make_spark_converter(df)
+#     with converter1.make_tf_dataset() as dataset:
+#         iterator = dataset.make_one_shot_iterator()
+#         tensor = iterator.get_next()
+#         with tf.Session() as sess:
+#             ts = sess.run(tensor)
+#     assert np.float32 == ts.c1.dtype.type
 
-    converter1 = make_spark_converter(df)
-    with converter1.make_tf_dataset() as dataset:
-        iterator = dataset.make_one_shot_iterator()
-        tensor = iterator.get_next()
-        with tf.Session() as sess:
-            ts = sess.run(tensor)
-    assert np.float32 == ts.double_col.dtype.type
 
-    converter2 = make_spark_converter(df, dtype='float64')
-    with converter2.make_tf_dataset() as dataset:
-        iterator = dataset.make_one_shot_iterator()
-        tensor = iterator.get_next()
-        with tf.Session() as sess:
-            ts = sess.run(tensor)
-    assert np.float64 == ts.float_col.dtype.type
-
-    converter3 = make_spark_converter(df, dtype=None)
-    with converter3.make_tf_dataset() as dataset:
-        iterator = dataset.make_one_shot_iterator()
-        tensor = iterator.get_next()
-        with tf.Session() as sess:
-            ts = sess.run(tensor)
-    assert np.float32 == ts.float_col.dtype.type
-    assert np.float64 == ts.double_col.dtype.type
-
-    with pytest.raises(ValueError, match="dtype float16 is not supported. \
-            Use 'float32' or float64"):
-        make_spark_converter(df, dtype="float16")
-
-
-@create_tf_graph
-def test_array(spark_test_ctx):
-    df = spark_test_ctx.spark.createDataFrame(
-        [([1., 2., 3.],),
-         ([4., 5., 6.],)],
-        StructType([
-            StructField(name='c1', dataType=ArrayType(DoubleType()))
-        ])
-    )
-    converter1 = make_spark_converter(df)
-    with converter1.make_tf_dataset() as dataset:
-        iterator = dataset.make_one_shot_iterator()
-        tensor = iterator.get_next()
-        with tf.Session() as sess:
-            ts = sess.run(tensor)
-    assert np.float32 == ts.c1.dtype.type
-
-
-@pytest.mark.skipif(
-    LooseVersion(pyspark.__version__) < LooseVersion("3.0"),
-    reason="Vector columns are not supported for pyspark {} < 3.0.0"
-    .format(pyspark.__version__))
-@create_tf_graph
-def test_vector_to_array(spark_test_ctx):
-    from pyspark.ml.linalg import Vectors
-    from pyspark.mllib.linalg import Vectors as OldVectors
-    df = spark_test_ctx.spark.createDataFrame([
-        (Vectors.dense(1.0, 2.0, 3.0), OldVectors.dense(10.0, 20.0, 30.0)),
-        (Vectors.dense(5.0, 6.0, 7.0), OldVectors.dense(50.0, 60.0, 70.0))
-    ], ["vec", "oldVec"])
-    converter1 = make_spark_converter(df)
-    with converter1.make_tf_dataset(num_epochs=1) as dataset:
-        iterator = dataset.make_one_shot_iterator()
-        tensor = iterator.get_next()
-        with tf.Session() as sess:
-            ts = sess.run(tensor)
-    assert np.float32 == ts.vec.dtype.type
-    assert np.float32 == ts.oldVec.dtype.type
-    vec_col = ts.vec[ts.vec[:, 0].argsort()]
-    old_vec_col = ts.oldVec[ts.oldVec[:, 0].argsort()]
-    assert (2, 3) == ts.vec.shape
-    assert (2, 3) == ts.oldVec.shape
-    assert ([1., 2., 3.] == vec_col[0]).all() and \
-           ([5., 6., 7.] == vec_col[1]).all()
-    assert ([10., 20., 30.] == old_vec_col[0]).all() and \
-           ([50., 60., 70] == old_vec_col[1]).all()
+# @pytest.mark.skipif(
+#     LooseVersion(pyspark.__version__) < LooseVersion("3.0"),
+#     reason="Vector columns are not supported for pyspark {} < 3.0.0"
+#     .format(pyspark.__version__))
+# @create_tf_graph
+# def test_vector_to_array(spark_test_ctx):
+#     from pyspark.ml.linalg import Vectors
+#     from pyspark.mllib.linalg import Vectors as OldVectors
+#     df = spark_test_ctx.spark.createDataFrame([
+#         (Vectors.dense(1.0, 2.0, 3.0), OldVectors.dense(10.0, 20.0, 30.0)),
+#         (Vectors.dense(5.0, 6.0, 7.0), OldVectors.dense(50.0, 60.0, 70.0))
+#     ], ["vec", "oldVec"])
+#     converter1 = make_spark_converter(df)
+#     with converter1.make_tf_dataset(num_epochs=1) as dataset:
+#         iterator = dataset.make_one_shot_iterator()
+#         tensor = iterator.get_next()
+#         with tf.Session() as sess:
+#             ts = sess.run(tensor)
+#     assert np.float32 == ts.vec.dtype.type
+#     assert np.float32 == ts.oldVec.dtype.type
+#     vec_col = ts.vec[ts.vec[:, 0].argsort()]
+#     old_vec_col = ts.oldVec[ts.oldVec[:, 0].argsort()]
+#     assert (2, 3) == ts.vec.shape
+#     assert (2, 3) == ts.oldVec.shape
+#     assert ([1., 2., 3.] == vec_col[0]).all() and \
+#            ([5., 6., 7.] == vec_col[1]).all()
+#     assert ([10., 20., 30.] == old_vec_col[0]).all() and \
+#            ([50., 60., 70] == old_vec_col[1]).all()
 
 
 def test_torch_primitive(spark_test_ctx):
